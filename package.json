@@ -9,7 +9,8 @@
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
     "db:seed": "tsx src/db/seed.ts",
-    "eval": "tsx evals/run.ts",
+    "eval": "evalite run",
+    "eval:dev": "evalite watch",
     "test": "vitest run"
   },
   "dependencies": {
@@ -36,10 +37,16 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "autoprefixer": "^10.4.20",
+    "evalite": "1.0.0-beta.16",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
     "tsx": "^4.19.2",
     "typescript": "^5.8.3",
     "vitest": "^3.0.0"
+  },
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }

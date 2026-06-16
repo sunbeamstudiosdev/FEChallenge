@@ -2,6 +2,7 @@ import {
   convertToModelMessages,
   stepCountIs,
   streamText,
+  type LanguageModel,
   type UIMessage,
 } from "ai";
 
@@ -23,10 +24,13 @@ export async function streamCopilot({
   workspaceId,
   role,
   messages,
+  model = getModel(),
 }: {
   workspaceId: string;
   role: Role;
   messages: UIMessage[];
+  /** Override the model — e.g. wrap it with evalite's wrapAISDKModel in evals. */
+  model?: LanguageModel;
 }) {
   await ensureSchema();
 
@@ -34,7 +38,7 @@ export async function streamCopilot({
   // loop is part of the exercise — consider tool-error handling, your stop
   // strategy, and whether the agent should emit a typed structured answer.
   return streamText({
-    model: getModel(),
+    model,
     system: SYSTEM_PROMPT,
     messages: await convertToModelMessages(messages),
     tools: buildTools({ workspaceId, role }),

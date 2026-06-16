@@ -42,7 +42,7 @@ src/
   server/    tRPC router + context (carries workspaceId + role from headers)
   agent/     tools.ts · run.ts (streamText loop) · provider.ts · mock-model.ts · artifact.ts
   app/       chat UI, providers, /api/chat, /api/trpc
-evals/       benchmark scorecard (pnpm eval)
+evals/       agent evals — Evalite *.eval.ts (pnpm eval)
 ```
 
 ## Stack
@@ -57,7 +57,8 @@ file-backed at `./.pglite`) · Tailwind v3 · TypeScript strict.
 pnpm install
 pnpm db:seed      # wipe + seed the two workspaces (Brightwave, Meridian Logistics)
 pnpm dev          # http://localhost:3000
-pnpm eval         # the benchmark scorecard
+pnpm eval         # run agent evals once (Evalite)
+pnpm eval:dev     # Evalite watch + local UI
 pnpm typecheck
 pnpm test         # vitest
 pnpm build
@@ -69,4 +70,4 @@ pnpm build
 - `src/db/analytics.ts` — the reference query + `scopeWhere`; build the layer.
 - `src/db/permissions.ts` — enforce PII by role (it's a stub).
 - `src/app/page.tsx` — turn tool results into real generative UI (currently a stub).
-- `evals/run.ts` — make the two TODO benchmarks real.
+- `evals/copilot.eval.ts` — Evalite; flesh out the tenant-isolation & permission evals.

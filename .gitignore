@@ -18,6 +18,10 @@ next-env.d.ts
 # misc
 .DS_Store
 
+# evalite (only if you opt into persistent SQLite storage; default is in-memory)
+/evalite.db
+/.evalite
+
 # private reference solution — must NOT ship in the public/candidate repo.
 # Move this into your private repo; it's here only so the full build isn't lost.
 /_reference

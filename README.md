@@ -78,8 +78,10 @@ so you spend your time on the parts that matter.
 - **Permissions.** Enforce the PII rule by role (`src/db/permissions.ts` is a stub).
 - **The generative UI.** Turn tool results into real, streaming chart/table
   components (the current render is a bare stub).
-- **Benchmarks.** `evals/run.ts` has one worked example + two `todo` stubs (tenant
-  isolation, permissions). Make them real — they must catch the thing they claim to.
+- **Benchmarks.** Evals run on [Evalite](https://v1.evalite.dev) (`*.eval.ts`,
+  zero-setup in-memory). `evals/copilot.eval.ts` is a worked example; add real evals
+  for tenant isolation, permissions, and — once a real model is wired — answer
+  quality. They must catch the thing they claim to.
 
 ---
 
@@ -116,7 +118,8 @@ A short written plan in `DECISIONS.md` counts as much as code here.
 pnpm install
 pnpm db:seed      # wipe + seed the two workspaces (in-process Postgres)
 pnpm dev          # http://localhost:3000
-pnpm eval         # the benchmark scorecard
+pnpm eval         # run agent evals once (Evalite)
+pnpm eval:dev     # Evalite watch mode + local UI (traces per test case)
 pnpm typecheck
 pnpm test
 pnpm build
@@ -135,11 +138,11 @@ src/
   agent/     tools.ts (1 reference tool) · run.ts (the loop) · provider.ts · mock-model.ts · artifact.ts
   server/    tRPC router + context (carries workspaceId + role)
   app/       chat UI, providers, /api/chat, /api/trpc
-evals/       the benchmark scorecard (pnpm eval)
+evals/       agent evals — Evalite *.eval.ts (pnpm eval)
 ```
 
 Stack: Next.js 16 (App Router) · React 19 · Vercel AI SDK v6 · tRPC v11 +
-TanStack Query · Drizzle over PGlite · Tailwind · TypeScript strict.
+TanStack Query · Drizzle over PGlite · Evalite (evals) · Tailwind · TypeScript strict.
 
 ---
 
