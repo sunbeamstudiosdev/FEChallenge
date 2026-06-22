@@ -45,7 +45,10 @@ export function getModel(): LanguageModel {
       }
       const anthropic = createAnthropic({
         apiKey: process.env.ANTHROPIC_API_KEY,
-        baseURL,
+        // The gateway when configured, otherwise the official API. We pin this
+        // explicitly so a stray ANTHROPIC_BASE_URL in the environment can't
+        // silently redirect us (and drop the required /v1 path).
+        baseURL: baseURL ?? "https://api.anthropic.com/v1",
         // When routing through an *authenticated* Cloudflare AI Gateway, send
         // the gateway token alongside the Anthropic key. Harmless when unset.
         headers: env.AI_GATEWAY_TOKEN
