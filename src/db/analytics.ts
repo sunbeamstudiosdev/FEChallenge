@@ -150,12 +150,15 @@ export async function applicationsOverTime(
 ) {
   const bucket = opts.bucket ?? "week";
   const period = sql<string>`to_char(date_trunc(${bucket}, ${applications.appliedAt}), 'YYYY-MM-DD')`;
+  // Group/order by ordinal position: a bound param inside the expression keeps
+  // Postgres from text-matching a repeated GROUP BY of the same fragment, and
+  // the 'YYYY-MM-DD' format makes lexical order chronological.
   return db
     .select({ period, count: count() })
     .from(applications)
     .where(scopeWhere(applications, ctx))
-    .groupBy(period)
-    .orderBy(period);
+    .groupBy(sql`1`)
+    .orderBy(sql`1`);
 }
 
 /**
