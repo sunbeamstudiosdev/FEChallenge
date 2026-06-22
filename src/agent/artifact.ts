@@ -12,4 +12,13 @@ export type Display =
   | { kind: "bar"; x: string; y: string; title: string }
   | { kind: "line"; x: string; y: string; title: string };
 
-export type ToolResult = { rows: Row[]; display: Display };
+export type ToolResult = {
+  rows: Row[];
+  display: Display;
+  /**
+   * Set when a tool failed. The agent loop sees this in the tool result and can
+   * recover (retry with different params, or explain) instead of the call
+   * throwing into the void. The UI renders it as an error state.
+   */
+  error?: string;
+};
