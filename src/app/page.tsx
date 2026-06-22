@@ -175,19 +175,19 @@ export default function Page() {
 }
 
 // ---------------------------------------------------------------------------
-// Tool-call rendering.
+// Tool-call rendering — generative UI.
 //
-// TODO(candidate): this is a deliberately bare stub. Each tool returns
-// `{ rows, display }` where `display.kind` is "table" | "bar" | "line". Turn
-// these into real, streaming generative UI — render bar/line charts, show the
-// "calling…" → "result" transition nicely, handle empty/error states. Make it
-// something you'd ship.
+// Each tool returns `{ rows, display }` where `display.kind` is
+// "table" | "bar" | "line". We render a component per kind, show the
+// calling → result transition, and handle empty/error states. The output
+// arrives as the agent streams, so the card updates live.
 // ---------------------------------------------------------------------------
+type ToolOutput = { rows?: Row[]; display?: Display; error?: string };
 type ToolPart = {
   type: string;
   state?: string;
   input?: unknown;
-  output?: { rows?: Row[]; display?: Display };
+  output?: ToolOutput;
   errorText?: string;
 };
 
@@ -195,29 +195,140 @@ function ToolCall({ part }: { part: unknown }) {
   const p = part as ToolPart;
   const name = p.type.replace(/^tool-/, "");
   const done = p.state === "output-available";
-  const errored = p.state === "output-error";
+  // Either the framework errored the call, or our tool returned a structured error.
+  const errored = p.state === "output-error" || Boolean(p.output?.error);
+  const errorText = p.errorText ?? p.output?.error;
 
   return (
-    <div className="rounded-md border border-dashed border-gray-300 px-3 py-2 text-xs">
-      <div className="font-medium text-gray-600">
-        {name}{" "}
+    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-xs shadow-sm">
+      <div className="flex items-center gap-2 font-medium text-gray-700">
+        {!done && !errored && (
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
+        )}
+        <span className="font-mono">{name}</span>
         <span className="font-normal text-gray-400">
           {errored ? "· error" : done ? "· result" : "· calling…"}
         </span>
       </div>
-      {errored && <p className="mt-1 text-red-500">{p.errorText}</p>}
-      {done && <RowsTable output={p.output} />}
+      {errored && (
+        <p className="mt-1.5 text-red-600">{errorText ?? "Tool call failed."}</p>
+      )}
+      {done && !errored && <Artifact output={p.output} />}
     </div>
   );
 }
 
-function RowsTable({ output }: { output?: { rows?: Row[]; display?: Display } }) {
+function Artifact({ output }: { output?: ToolOutput }) {
   const rows = output?.rows ?? [];
-  if (rows.length === 0) return <p className="mt-1 text-gray-400">No rows.</p>;
-
   const display = output?.display;
+  if (rows.length === 0) {
+    return <p className="mt-2 text-gray-400">No matching data.</p>;
+  }
+  if (display?.kind === "bar") return <BarChart rows={rows} display={display} />;
+  if (display?.kind === "line") return <LineChart rows={rows} display={display} />;
+  return <DataTable rows={rows} display={display} />;
+}
+
+function toNum(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function BarChart({
+  rows,
+  display,
+}: {
+  rows: Row[];
+  display: Extract<Display, { kind: "bar" }>;
+}) {
+  const max = Math.max(1, ...rows.map((r) => toNum(r[display.y])));
+  return (
+    <figure className="mt-2 space-y-1.5">
+      <figcaption className="mb-1 font-medium text-gray-600">
+        {display.title}
+      </figcaption>
+      {rows.map((r, i) => {
+        const value = toNum(r[display.y]);
+        return (
+          <div key={i} className="flex items-center gap-2">
+            <span className="w-28 shrink-0 truncate text-right text-gray-500">
+              {String(r[display.x] ?? "")}
+            </span>
+            <div className="flex h-4 flex-1 items-center">
+              <div
+                className="h-full rounded-sm bg-blue-500/80"
+                style={{ width: `${(value / max) * 100}%` }}
+              />
+              <span className="ml-1.5 tabular-nums text-gray-600">{value}</span>
+            </div>
+          </div>
+        );
+      })}
+    </figure>
+  );
+}
+
+function LineChart({
+  rows,
+  display,
+}: {
+  rows: Row[];
+  display: Extract<Display, { kind: "line" }>;
+}) {
+  const W = 320;
+  const H = 80;
+  const pad = 4;
+  const values = rows.map((r) => toNum(r[display.y]));
+  const max = Math.max(1, ...values);
+  const stepX = rows.length > 1 ? (W - pad * 2) / (rows.length - 1) : 0;
+  const points = values.map((v, i) => {
+    const x = pad + i * stepX;
+    const y = H - pad - (v / max) * (H - pad * 2);
+    return [x, y] as const;
+  });
+  const path = points.map(([x, y]) => `${x},${y}`).join(" ");
+
+  return (
+    <figure className="mt-2">
+      <figcaption className="mb-1 font-medium text-gray-600">
+        {display.title}
+      </figcaption>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="h-24 w-full"
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={display.title}
+      >
+        <polyline
+          points={path}
+          fill="none"
+          stroke="rgb(59 130 246)"
+          strokeWidth={1.5}
+          vectorEffect="non-scaling-stroke"
+        />
+        {points.map(([x, y], i) => (
+          <circle key={i} cx={x} cy={y} r={2} fill="rgb(59 130 246)" />
+        ))}
+      </svg>
+      <div className="flex justify-between text-gray-400">
+        <span>{String(rows[0]?.[display.x] ?? "")}</span>
+        <span>peak {max}</span>
+        <span>{String(rows[rows.length - 1]?.[display.x] ?? "")}</span>
+      </div>
+    </figure>
+  );
+}
+
+function DataTable({
+  rows,
+  display,
+}: {
+  rows: Row[];
+  display?: Display;
+}) {
   const columns =
-    display && display.kind === "table"
+    display && display.kind === "table" && display.columns.length > 0
       ? display.columns
       : Object.keys(rows[0]);
 
@@ -233,7 +344,7 @@ function RowsTable({ output }: { output?: { rows?: Row[]; display?: Display } })
         </tr>
       </thead>
       <tbody>
-        {rows.slice(0, 8).map((row, i) => (
+        {rows.slice(0, 12).map((row, i) => (
           <tr key={i} className="text-gray-600">
             {columns.map((c) => (
               <td key={c} className="border-b border-gray-50 py-1 pr-2">
