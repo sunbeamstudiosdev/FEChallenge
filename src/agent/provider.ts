@@ -46,6 +46,11 @@ export function getModel(): LanguageModel {
       const anthropic = createAnthropic({
         apiKey: process.env.ANTHROPIC_API_KEY,
         baseURL,
+        // When routing through an *authenticated* Cloudflare AI Gateway, send
+        // the gateway token alongside the Anthropic key. Harmless when unset.
+        headers: env.AI_GATEWAY_TOKEN
+          ? { "cf-aig-authorization": `Bearer ${env.AI_GATEWAY_TOKEN}` }
+          : undefined,
       });
       return anthropic(env.ANTHROPIC_MODEL);
     }
