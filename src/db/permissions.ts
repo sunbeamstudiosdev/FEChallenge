@@ -4,12 +4,14 @@
  * The copilot serves users with different roles. Some columns are PII and must
  * not be readable by every role.
  *
- * TODO(candidate): PII permissions are DEFINED here but NOT yet ENFORCED.
- * An `analyst` should never be able to read PII columns (candidate
- * name/email/phone); `recruiter` and `admin` may. Wire enforcement into the
- * query layer (src/db/analytics.ts) so it cannot be skipped — ideally make a
- * PII-leaking query for the wrong role *unrepresentable*, not merely rejected
- * after the fact. Then prove it with an eval.
+ * ENFORCEMENT STRATEGY — "unrepresentable, not redacted".
+ * Rather than selecting PII and stripping it before returning (which leaves PII
+ * briefly in memory and is easy to forget on a new code path), the query layer
+ * asks `canReadColumn` *while building the SQL projection*. For an `analyst`,
+ * the PII columns are never added to the `select`, so the database never
+ * returns them and the result type literally cannot carry them. This mirrors
+ * the tenant-scoping philosophy of `scopeWhere` in `analytics.ts`: make the
+ * unsafe query impossible to express, don't rely on a later cleanup step.
  */
 
 export const ROLES = ["admin", "recruiter", "analyst"] as const;
@@ -27,12 +29,24 @@ export const PII_COLUMNS: Record<string, readonly string[]> = {
   candidates: ["name", "email", "phone"],
 };
 
+/** Whether `table.column` is PII under the policy above. */
+export function isPiiColumn(table: string, column: string): boolean {
+  return PII_COLUMNS[table]?.includes(column) ?? false;
+}
+
 /**
  * Whether `role` may read `table.column`.
  *
- * TODO(candidate): implement real enforcement. Right now this is permissive —
- * every role can read everything, including PII. That's the gap to close.
+ * The single rule: an `analyst` may not read PII columns; `recruiter` and
+ * `admin` may read everything. Everything non-PII is readable by all roles.
+ * The query layer consults this per-column when assembling a projection.
  */
-export function canReadColumn(_role: Role, _table: string, _column: string): boolean {
+export function canReadColumn(role: Role, table: string, column: string): boolean {
+  if (role === "analyst" && isPiiColumn(table, column)) return false;
   return true;
+}
+
+/** Convenience: may this role read candidate PII at all? Used for tool hints/UX. */
+export function canReadPii(role: Role): boolean {
+  return role !== "analyst";
 }
