@@ -12,8 +12,10 @@
 *.tsbuildinfo
 next-env.d.ts
 
-# env
-.env*.local
+# env — ignore all env files (incl. secrets) except the committed template
+.env
+.env.*
+!.env.example
 
 # misc
 .DS_Store
