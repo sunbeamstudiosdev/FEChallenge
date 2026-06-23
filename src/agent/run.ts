@@ -3,6 +3,7 @@ import {
   stepCountIs,
   streamText,
   type LanguageModel,
+  type ToolSet,
   type UIMessage,
 } from "ai";
 
@@ -26,12 +27,16 @@ export async function streamCopilot({
   role,
   messages,
   model = getModel(),
+  tools,
 }: {
   workspaceId: string;
   role: Role;
   messages: UIMessage[];
   /** Override the model — e.g. wrap it with evalite's wrapAISDKModel in evals. */
   model?: LanguageModel;
+  /** Override the tool catalog — used by tests to inject a failing tool and
+   *  prove the repair path. Defaults to the real, scoped catalog. */
+  tools?: ToolSet;
 }) {
   await ensureSchema();
 
@@ -42,7 +47,7 @@ export async function streamCopilot({
     model,
     system: SYSTEM_PROMPT,
     messages: await convertToModelMessages(messages),
-    tools: buildTools({ workspaceId, role }),
+    tools: tools ?? buildTools({ workspaceId, role }),
     stopWhen: stepCountIs(6),
     // Tag each request with the tenant so the gateway's analytics, caching, and
     // rate-limit views can be segmented per workspace/role. Gateway-only; the

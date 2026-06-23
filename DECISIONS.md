@@ -46,6 +46,8 @@ queried, never produced by the model, so it stays grounded and the trend only
 shows when there's enough data to be honest about it. I built the bar
 and line charts with plain CSS and a small inline SVG instead of pulling in a chart library. Less polished, but no dependency and easy to reason about. The table only renders the columns that are actually present, so an analyst's table just doesn't have PII columns in it. The copilot's prose is rendered with Streamdown (the streaming markdown renderer Vercel ships), so bold, lists, and the like render correctly even while tokens are still streaming in. The one wrinkle is that Streamdown's docs assume Tailwind 4, so on this Tailwind 3 project I import its prebuilt styles.css rather than the v4 @source directive. Worth noting: ai-elements' Response/MessageResponse component is just a thin wrapper around Streamdown. I used the package directly to avoid the shadcn + Tailwind 4 init the ai-elements CLI assumes.
 
+A few touches to make it feel like a product rather than a one-shot demo. Bars are clickable: clicking a stage or source bar asks the matching follow-up ("show me the candidates in the interview stage"), which the model then routes to the right tool, so the chart becomes a way to navigate the data. After each answer I show two or three suggested next questions, picked from the tool that produced the answer. And the conversation persists to localStorage, scoped per workspace and role so the two tenants never share a transcript, and restores on reload. To avoid prop-drilling the chat's send through every chart and chip, a small React context provides it at the transcript root (and goes null while the agent is busy, which disables the controls).
+
 **Visual design.** I used the shadcn-admin template as a visual reference, not a
 dependency. It is a Vite + Tailwind 4 + Radix project, so adopting it wholesale
 would have meant a risky migration; instead I lifted its design language (a
@@ -62,8 +64,17 @@ I'm running Anthropic through a Cloudflare AI Gateway. Anthropic because the job
 is mostly tool routing rather than hard reasoning, and Claude drives typed tools
 well, and it was already wired in the provider layer. The gateway because it gives me one place for observability, caching, and rate limiting without touching app code, and it keeps the upstream key off the client. The one gotcha worth noting: the AI SDK appends `/messages`, so the base URL has to end in `/anthropic/v1`, not just `/anthropic`. I default the model to claude-sonnet-4-6 since it's fast, cheap, and good at tool calls (so the evals stay cheap to run), and left claude-opus-4-8 as the option for the quality bar. There's also an optional gateway token for running the gateway in authenticated mode.
 
-The loop itself is the given streamText setup capped at 6 steps. I kept that and
-added the tool error handling described above.
+The loop itself is the given streamText setup capped at 6 steps. I kept the shape
+and taught it a few behaviors through the system prompt, each backed by an eval:
+it calls more than one tool when a question has separate parts (for example
+"compare the pipeline to where candidates come from"); it asks one short
+clarifying question instead of guessing when a question is ambiguous (for example
+"how did that job do?" without saying which job); and it recovers from a tool
+error rather than dumping it. That last one leans on the `guard()` wrapper: a
+query failure comes back as a structured `{ error }` the model can act on instead
+of throwing into the stream, so the turn still ends in a helpful answer. A
+deterministic test proves the repair path (a tool that always fails still ends in
+a final answer, no stack trace), and an eval proves the real model recovers.
 
 ## Benchmarks
 
@@ -78,6 +89,8 @@ admin. Remove scopeWhere and this goes red.
 The PII eval runs the copilot as an analyst and checks two things: no row carries a name/email/phone key, and the prose contains no seeded email or phone. Make `canReadColumn` permissive and it fails.
 
 The answer quality eval is an LLM judge and only runs against a real model, since the mock just returns canned text. It checks whether the answer addresses the question and stays consistent with the tool data.
+
+I also pushed the evals past pass/fail into trajectory and cost. Beyond "did it answer," the trajectory eval grades whether the agent picked the tool I'd expect for each question, answered within a tight step budget, and stayed under a token ceiling (a cost regression gate I can tighten once there's a recorded baseline). The harness captures steps, tokens, and latency per case for this. And because the quality eval rests on an LLM judge, I added a judge-the-judge eval: a tiny golden set with known labels (one grounded answer that must score PASS, one fabricated answer that must score FAIL) so I can tell the judge actually discriminates rather than rubber-stamping. The model-dependent scorers are gated on a real provider so CI stays green offline; I verified the whole suite both ways, 23 of 23 at 100% on the mock and again against claude-sonnet-4-6.
 
 One honest note on tooling: the repo pinned vitest 3 but evalite beta.16 is built for vitest 4, so its reporter crashed while rendering any failed test (it hid the real failure behind a stack trace). I bumped vitest to 4 and pinned pnpm 9 so the lockfile format held. That paid off immediately: the eval then actually caught a real bug, `applicationsOverTime` was failing Postgres's GROUP BY rule because I reused a parameter bearing date_trunc expression in both SELECT and GROUP BY. The `returnedData` scorer went to zero, I traced it, and fixed it to group by ordinal position. The reporter now renders pass and fail cleanly.
 
@@ -119,21 +132,26 @@ conscious no, not an oversight.
 - **Pagination** in `findCandidates` (capped at 100). Correct at seed scale;
   cursor pagination is the obvious extension.
 
-What I did take past the bar earns its keep because it closes the core probe
-rather than adding surface: the adversarial guarantee suite that runs in CI and
-goes red the instant enforcement weakens, Row-Level Security as a second layer
-under `scopeWhere`, the build-time import fence and compile-time PII types that
-make the guarantees structural in three independent ways, the grounded headline
-metric, and the live deploy behind the gateway.
+What I took past the bar earns its keep because it deepens the two things this
+exercise is really probing, enforcement and agentic quality, rather than just
+adding surface. On enforcement: the adversarial guarantee suite that runs in CI
+and goes red the instant enforcement weakens, plus Row-Level Security, the
+build-time import fence, and compile-time PII types, so each guarantee holds three
+independent ways, and the live deploy behind the gateway. On agentic quality: the
+grounded headline metric; an agent that fans out to multiple tools on compound
+questions, asks before guessing on ambiguous ones, and recovers from a tool error;
+eval maturity past pass/fail (trajectory, a cost gate, and a judge-the-judge
+calibration check); and product touches that make it usable (clickable drill-down
+from a chart, suggested follow-ups, and per-tenant conversation persistence).
 
-With another day: deeper eval maturity (trajectory checks that grade tool choice
-and step count, plus a cost and latency regression gate), a clarifying-question
-turn when a question is ambiguous instead of guessing, an eval that proves the
-agent recovers from a tool error, parallel tool calls for compound questions, and
-more product polish (drill-down from a chart, suggested follow-ups, conversation
-persistence). These are real depth, but each adds surface, and shipping all of
-them would trade the "knows where to stop" signal for breadth. I'd pick the
-highest-leverage two or three.
+The honest caveat: that is a lot, and "knows where to stop" is itself a signal.
+I went wide here deliberately, to show range, but each piece is scoped and
+defended rather than half-built, and the things I left out below are left out on
+purpose.
+
+With another day: per-workspace rate limiting through the gateway's dynamic
+routing, cursor pagination in `findCandidates`, and generated drizzle-kit
+migrations, all noted below.
 
 ## Deployment (Cloudflare Workers + Neon)
 
