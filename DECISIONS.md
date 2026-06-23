@@ -33,7 +33,7 @@ applicationsOverTime, and findCandidates. They take typed Zod inputs with enums 
 
 **Generative UI.** Tool results carry a `display` hint (bar, line, or table) and
 the chat page renders a component per kind as the agent streams. I built the bar
-and line charts with plain CSS and a small inline SVG instead of pulling in a chart library. Less polished, but no dependency and easy to reason about. The table only renders the columns that are actually present, so an analyst's table just doesn't have PII columns in it.
+and line charts with plain CSS and a small inline SVG instead of pulling in a chart library. Less polished, but no dependency and easy to reason about. The table only renders the columns that are actually present, so an analyst's table just doesn't have PII columns in it. The copilot's prose is rendered with Streamdown (the streaming markdown renderer Vercel ships), so bold, lists, and the like render correctly even while tokens are still streaming in. The one wrinkle is that Streamdown's docs assume Tailwind 4, so on this Tailwind 3 project I import its prebuilt styles.css rather than the v4 @source directive.
 
 ## Model and agent
 
