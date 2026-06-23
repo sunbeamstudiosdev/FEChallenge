@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ats-analytics-copilot",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-04-01",
+  // nodejs_compat: the app runs on the Node.js runtime (the AI SDK, Neon HTTP
+  // driver, tRPC). global_fetch_strictly_public is recommended by OpenNext.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "ats-analytics-copilot"
+    }
+  ],
+  // Non-secret config. Add AI_GATEWAY_BASE_URL here once the Cloudflare AI
+  // Gateway exists (it ends in /anthropic/v1).
+  "vars": {
+    "AI_PROVIDER": "anthropic",
+    "ANTHROPIC_MODEL": "claude-sonnet-4-6"
+  }
+  // Secrets — set with `wrangler secret put <NAME>` (never committed):
+  //   ANTHROPIC_API_KEY, DATABASE_URL
+}

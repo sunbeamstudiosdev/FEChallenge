@@ -12,7 +12,11 @@
     "db:seed": "tsx src/db/seed.ts",
     "eval": "evalite run",
     "eval:dev": "evalite watch",
-    "test": "vitest run"
+    "test": "vitest run",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf:typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^4.0.77",
@@ -21,6 +25,8 @@
     "@ai-sdk/provider": "^3.0.0",
     "@ai-sdk/react": "^3.0.0",
     "@electric-sql/pglite": "0.2.17",
+    "@neondatabase/serverless": "^1.1.0",
+    "@opennextjs/cloudflare": "^1.19.11",
     "@tanstack/react-query": "^5.80.7",
     "@trpc/client": "^11.4.0",
     "@trpc/server": "^11.4.0",
@@ -44,7 +50,8 @@
     "tailwindcss": "^3.4.15",
     "tsx": "^4.19.2",
     "typescript": "^5.8.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "wrangler": "^4.104.0"
   },
   "pnpm": {
     "ignoredBuiltDependencies": [

@@ -1,0 +1,16 @@
+# Copy to .dev.vars (gitignored) to run the Workers runtime locally via
+# `pnpm cf:preview`. In production these are set as Worker vars/secrets instead
+# (see wrangler.jsonc vars + `wrangler secret put`).
+
+NEXTJS_ENV=development
+
+AI_PROVIDER=anthropic
+ANTHROPIC_MODEL=claude-sonnet-4-6
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Cloudflare AI Gateway (ends in /anthropic/v1)
+AI_GATEWAY_BASE_URL=https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway>/anthropic/v1
+
+# Neon serverless Postgres connection string. Setting this switches the DB
+# client from PGlite to Neon (see src/db/client.ts).
+DATABASE_URL=postgresql://USER:PASSWORD@HOST/DB?sslmode=require
