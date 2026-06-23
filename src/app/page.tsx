@@ -4,6 +4,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { Streamdown } from "streamdown";
 
 import { ROLES } from "@/db/permissions";
 import type { Display, Row } from "@/agent/artifact";
@@ -119,17 +120,22 @@ export default function Page() {
                 </div>
                 {message.parts.map((part, i) => {
                   if (part.type === "text") {
-                    return (
+                    // User text is plain; the copilot's text is markdown, so
+                    // render it with Streamdown (a div, since it emits blocks).
+                    return isUser ? (
                       <p
                         key={i}
-                        className={`whitespace-pre-wrap break-words rounded-md px-3 py-2 text-sm ${
-                          isUser
-                            ? "bg-gray-900 text-white"
-                            : "bg-gray-50 text-gray-800"
-                        }`}
+                        className="whitespace-pre-wrap break-words rounded-md bg-gray-900 px-3 py-2 text-sm text-white"
                       >
-                        {isUser ? part.text : renderInline(part.text)}
+                        {part.text}
                       </p>
+                    ) : (
+                      <div
+                        key={i}
+                        className="rounded-md bg-gray-50 px-3 py-2 text-sm text-gray-800"
+                      >
+                        <Streamdown>{part.text}</Streamdown>
+                      </div>
                     );
                   }
                   if (part.type.startsWith("tool-")) {
@@ -257,25 +263,6 @@ function Artifact({ output }: { output?: ToolOutput }) {
 function toNum(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
-}
-
-// Minimal inline markdown for the assistant's prose: **bold**, *italic*, `code`.
-// The model only emits light inline formatting (we steer it away from tables and
-// lists), so this beats pulling in a full markdown renderer. React escapes the
-// text, so there's no injection risk.
-function renderInline(text: string): React.ReactNode[] {
-  const tokens = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*\n]+\*)/g);
-  return tokens.map((tok, i) => {
-    if (/^\*\*[^*]+\*\*$/.test(tok)) return <strong key={i}>{tok.slice(2, -2)}</strong>;
-    if (/^`[^`]+`$/.test(tok))
-      return (
-        <code key={i} className="rounded bg-gray-200 px-1 py-0.5 font-mono text-[0.85em]">
-          {tok.slice(1, -1)}
-        </code>
-      );
-    if (/^\*[^*\n]+\*$/.test(tok)) return <em key={i}>{tok.slice(1, -1)}</em>;
-    return tok;
-  });
 }
 
 function BarChart({
