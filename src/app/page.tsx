@@ -128,7 +128,7 @@ export default function Page() {
                             : "bg-gray-50 text-gray-800"
                         }`}
                       >
-                        {part.text}
+                        {isUser ? part.text : renderInline(part.text)}
                       </p>
                     );
                   }
@@ -257,6 +257,25 @@ function Artifact({ output }: { output?: ToolOutput }) {
 function toNum(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+// Minimal inline markdown for the assistant's prose: **bold**, *italic*, `code`.
+// The model only emits light inline formatting (we steer it away from tables and
+// lists), so this beats pulling in a full markdown renderer. React escapes the
+// text, so there's no injection risk.
+function renderInline(text: string): React.ReactNode[] {
+  const tokens = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*\n]+\*)/g);
+  return tokens.map((tok, i) => {
+    if (/^\*\*[^*]+\*\*$/.test(tok)) return <strong key={i}>{tok.slice(2, -2)}</strong>;
+    if (/^`[^`]+`$/.test(tok))
+      return (
+        <code key={i} className="rounded bg-gray-200 px-1 py-0.5 font-mono text-[0.85em]">
+          {tok.slice(1, -1)}
+        </code>
+      );
+    if (/^\*[^*\n]+\*$/.test(tok)) return <em key={i}>{tok.slice(1, -1)}</em>;
+    return tok;
+  });
 }
 
 function BarChart({
