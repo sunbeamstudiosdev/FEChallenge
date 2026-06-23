@@ -20,6 +20,10 @@ next-env.d.ts
 # misc
 .DS_Store
 
+# local AI tooling (vendored skills, launch config, local settings) — not part
+# of the deliverable. The committed agent config is CLAUDE.md at the repo root.
+.claude/
+
 # evalite (only if you opt into persistent SQLite storage; default is in-memory)
 /evalite.db
 /.evalite
