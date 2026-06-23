@@ -71,10 +71,12 @@ position. The reporter now renders pass and fail cleanly.
 
 I did the gateway stretch from the README's optional list. Both caching and rate
 limiting are gateway features, so most of the control lives on the gateway config
-and the app sends the per-request headers that drive them. Status: the app side is
-wired and committed; it goes live the moment the gateway exists and has caching and
-a rate limit configured, with the final check being a `cf-aig-cache-status: HIT` on
-a repeated request.
+and the app sends the per-request headers that drive them. Status: live and
+verified. The deployed app routes through an authenticated Cloudflare AI Gateway
+(`ats-copilot`) with caching and rate limiting enabled. A repeated identical
+`/api/chat` request dropped from about 7.2s to 1.1s, which is the gateway serving
+the upstream Anthropic calls from cache, and the requests show up in the gateway's
+Logs tab tagged with the per-tenant `workspaceId`/`role` metadata.
 
 Caching: when AI_GATEWAY_CACHE_TTL is set, the provider sends `cf-aig-cache-ttl`
 so our requests opt into the gateway cache, and AI_GATEWAY_SKIP_CACHE=true sends
@@ -149,9 +151,9 @@ Live at https://ats-analytics-copilot.f-7a4.workers.dev. I verified both
 non negotiables end to end on the Worker, not just locally: the tenant switcher
 reads the two workspaces from Neon, an admin question runs `applicationCountByStage`
 and streams a grounded answer, and an analyst asking for names and emails gets
-de-identified rows with no PII in the response. It is running direct to Anthropic
-for now; turning the gateway on (with its caching and rate limiting) is the last
-step.
+de-identified rows with no PII in the response. It routes through the Cloudflare
+AI Gateway (`ats-copilot`, authenticated) with caching and rate limiting on, which
+I verified by the repeated-request latency drop described in the stretch section.
 
 One wart to log: OpenNext's esbuild still bundles PGlite's wasm glue into the
 Worker even though it is never used there (`DATABASE_URL` is always set in
