@@ -30,6 +30,9 @@ cloudflare-env.d.ts
 # of the deliverable. The committed agent config is CLAUDE.md at the repo root.
 .claude/
 
+# UI reference templates (shadcn-admin, etc.) — design reference only, not shipped
+/ui/
+
 # evalite (only if you opt into persistent SQLite storage; default is in-memory)
 /evalite.db
 /.evalite

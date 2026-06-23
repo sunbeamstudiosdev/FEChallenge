@@ -35,6 +35,19 @@ applicationsOverTime, and findCandidates. They take typed Zod inputs with enums 
 the chat page renders a component per kind as the agent streams. I built the bar
 and line charts with plain CSS and a small inline SVG instead of pulling in a chart library. Less polished, but no dependency and easy to reason about. The table only renders the columns that are actually present, so an analyst's table just doesn't have PII columns in it. The copilot's prose is rendered with Streamdown (the streaming markdown renderer Vercel ships), so bold, lists, and the like render correctly even while tokens are still streaming in. The one wrinkle is that Streamdown's docs assume Tailwind 4, so on this Tailwind 3 project I import its prebuilt styles.css rather than the v4 @source directive. Worth noting: ai-elements' Response/MessageResponse component is just a thin wrapper around Streamdown. I used the package directly to avoid the shadcn + Tailwind 4 init the ai-elements CLI assumes.
 
+**Visual design.** I used the shadcn-admin template as a visual reference, not a
+dependency. It is a Vite + Tailwind 4 + Radix project, so adopting it wholesale
+would have meant a risky migration; instead I lifted its design language (a
+neutral oklch palette, Inter and Geist Mono, a 0.625rem radius, one blue accent)
+into our Tailwind 3 setup as CSS tokens exposed as semantic colors
+(bg-background, text-muted-foreground, border-border, and so on). That gives a
+cohesive look, light and dark theming from one place, and a real app shell: a
+sidebar with the workspace and role switchers plus a live pipeline, and a chat
+column with user bubbles, an empty state with clickable prompts, and refined tool
+cards. I ran the web-design-guidelines skill over the result and fixed what it
+flagged: reduced-motion handling, a screen-reader status for the busy state, a
+theme-color meta, and a balanced heading.
+
 ## Model and agent
 
 I'm running Anthropic through a Cloudflare AI Gateway. Anthropic because the job

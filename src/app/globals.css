@@ -2,15 +2,76 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design tokens, mirroring the shadcn neutral palette (oklch) with a blue accent.
+ * Consumed by tailwind.config.ts as semantic colors (bg-background, text-muted-
+ * foreground, border-border, etc.) so the whole UI themes from one place and
+ * dark mode is a class flip on <html>.
+ */
 :root {
   color-scheme: light;
+  --background: oklch(0.985 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.623 0.214 259.815);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --accent: oklch(0.623 0.214 259.815);
+  --accent-foreground: oklch(0.985 0 0);
+  --accent-soft: oklch(0.623 0.214 259.815 / 0.12);
+  --destructive: oklch(0.577 0.245 27.325);
+  --success: oklch(0.545 0.166 156.743);
+  --radius: 0.625rem;
 }
 
-html,
-body {
-  height: 100%;
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.623 0.214 259.815);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --accent: oklch(0.623 0.214 259.815);
+  --accent-foreground: oklch(0.985 0 0);
+  --accent-soft: oklch(0.623 0.214 259.815 / 0.18);
+  --destructive: oklch(0.704 0.191 22.216);
+  --success: oklch(0.696 0.17 162.48);
 }
 
-body {
-  @apply bg-gray-50 text-gray-900 antialiased;
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+  }
+}
+
+/* Honor reduced-motion: neutralize the thinking-dot bounce, pulse, and smooth
+ * scroll for users who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -3,7 +3,7 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 
 import { ROLES } from "@/db/permissions";
@@ -14,6 +14,13 @@ import {
   useTenant,
   useTRPC,
 } from "./providers";
+
+const EXAMPLE_PROMPTS = [
+  "How does my pipeline look by stage?",
+  "Where are candidates coming from?",
+  "Which jobs have the most applications?",
+  "How have applications trended over time?",
+];
 
 export default function Page() {
   const { activeWorkspace, setActiveWorkspace, role, setRole } = useTenant();
@@ -46,175 +53,365 @@ export default function Page() {
   const [input, setInput] = useState("");
   const busy = status === "streaming" || status === "submitted";
 
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
-    const text = input.trim();
-    if (!text || busy) return;
-    sendMessage({ text });
+  // Auto-scroll the transcript to the latest content as it streams.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [messages, busy]);
+
+  const workspaceName =
+    workspaces.data?.find((w) => w.slug === activeWorkspace)?.name ??
+    activeWorkspace;
+
+  function send(text: string) {
+    const t = text.trim();
+    if (!t || busy) return;
+    sendMessage({ text: t });
     setInput("");
   }
 
   return (
-    <main className="mx-auto grid h-screen max-w-6xl grid-cols-[1fr_320px] gap-4 p-4">
-      {/* Conversation column */}
-      <section className="flex min-h-0 flex-col rounded-lg border border-gray-200 bg-white">
-        <header className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-          <div className="min-w-0">
-            <h1 className="text-balance text-lg font-semibold">
-              ATS Analytics Copilot
-            </h1>
-            <p className="text-xs text-gray-500">
-              Chat with this workspace&rsquo;s recruiting data.
-            </p>
+    <div className="grid h-screen grid-cols-[280px_1fr] bg-background text-foreground">
+      <Sidebar
+        workspaces={workspaces.data ?? []}
+        activeWorkspace={activeWorkspace}
+        setActiveWorkspace={setActiveWorkspace}
+        role={role}
+        setRole={setRole}
+        pipeline={pipeline.data ?? []}
+      />
+
+      <main className="flex min-h-0 flex-col">
+        {/* Top bar */}
+        <header className="flex items-center justify-between border-b border-border px-6 py-3.5">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-sm font-semibold">{workspaceName}</h1>
+            <RoleBadge role={role} />
           </div>
-          <div className="flex items-center gap-3 text-sm">
-            <label className="flex items-center gap-1.5">
-              <span className="text-gray-500">Workspace</span>
-              <select
-                className="rounded border border-gray-300 px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
-                value={activeWorkspace}
-                onChange={(e) => setActiveWorkspace(e.target.value)}
-              >
-                {workspaces.data?.map((w) => (
-                  <option key={w.id} value={w.slug}>
-                    {w.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex items-center gap-1.5">
-              <span className="text-gray-500">Role</span>
-              <select
-                className="rounded border border-gray-300 px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
-                value={role}
-                onChange={(e) => setRole(e.target.value as (typeof ROLES)[number])}
-              >
-                {ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+          <span className="text-xs text-muted-foreground">
+            Analytics copilot
+          </span>
         </header>
 
+        {/* Transcript */}
         <div
-          className="flex-1 space-y-4 overflow-y-auto px-4 py-4"
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto scroll-smooth px-6 py-6"
           aria-live="polite"
         >
-          {messages.length === 0 && (
-            <p className="text-sm text-gray-400">
-              Ask about this workspace &mdash; e.g. &ldquo;How does my pipeline
-              look by stage?&rdquo; or &ldquo;Where are candidates coming
-              from?&rdquo;
-            </p>
-          )}
-
-          {messages.map((message) => {
-            const isUser = message.role === "user";
-            return (
-              <div key={message.id} className="space-y-2">
-                <div className="text-xs font-medium uppercase tracking-wide text-gray-400">
-                  {isUser ? "You" : "Copilot"}
-                </div>
-                {message.parts.map((part, i) => {
-                  if (part.type === "text") {
-                    // User text is plain; the copilot's text is markdown, so
-                    // render it with Streamdown (a div, since it emits blocks).
-                    return isUser ? (
-                      <p
-                        key={i}
-                        className="whitespace-pre-wrap break-words rounded-md bg-gray-900 px-3 py-2 text-sm text-white"
-                      >
-                        {part.text}
-                      </p>
-                    ) : (
-                      <div
-                        key={i}
-                        className="rounded-md bg-gray-50 px-3 py-2 text-sm text-gray-800"
-                      >
-                        <Streamdown>{part.text}</Streamdown>
-                      </div>
-                    );
-                  }
-                  if (part.type.startsWith("tool-")) {
-                    return <ToolCall key={i} part={part} />;
-                  }
-                  return null;
-                })}
-              </div>
-            );
-          })}
-
-          {busy && (
-            <p role="status" className="text-xs text-gray-400">
-              Copilot is working&hellip;
-            </p>
-          )}
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+            {messages.length === 0 ? (
+              <EmptyState onPick={send} disabled={busy} />
+            ) : (
+              messages.map((message) => (
+                <MessageRow key={message.id} message={message} />
+              ))
+            )}
+            {busy && <Thinking />}
+          </div>
         </div>
 
-        <form
-          onSubmit={submit}
-          className="flex items-center gap-2 border-t border-gray-200 px-4 py-3"
-        >
-          <input
-            className="flex-1 rounded border border-gray-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
-            placeholder="Ask the analytics copilot…"
-            aria-label="Message the analytics copilot"
-            name="message"
-            autoComplete="off"
-            enterKeyHint="send"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-          />
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 disabled:opacity-50"
+        {/* Composer */}
+        <div className="border-t border-border px-6 py-4">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              send(input);
+            }}
+            className="mx-auto flex w-full max-w-3xl items-center gap-2 rounded-lg border border-input bg-card px-2 py-1.5 shadow-sm focus-within:ring-2 focus-within:ring-ring"
           >
-            Send
-          </button>
-        </form>
-      </section>
-
-      {/* Side panel: a reference scoped read via tRPC (pipeline by stage). */}
-      <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto">
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <h2 className="mb-2 text-sm font-semibold">Pipeline (this workspace)</h2>
-          {pipeline.data && pipeline.data.length > 0 ? (
-            <ul className="space-y-1">
-              {pipeline.data.map((row) => (
-                <li key={row.stage} className="flex justify-between text-xs">
-                  <span className="font-medium">{row.stage}</span>
-                  <span className="tabular-nums text-gray-400">
-                    {Number(row.count)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-xs text-gray-400">No data.</p>
-          )}
+            <input
+              className="flex-1 bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
+              placeholder={`Ask about ${workspaceName}'s recruiting data…`}
+              aria-label="Message the analytics copilot"
+              name="message"
+              autoComplete="off"
+              enterKeyHint="send"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+            />
+            <button
+              type="submit"
+              disabled={busy || !input.trim()}
+              aria-label="Send message"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
+            >
+              <SendIcon />
+            </button>
+          </form>
+          <p className="mx-auto mt-2 max-w-3xl text-center text-[11px] text-muted-foreground">
+            Scoped to one workspace. Analysts never receive candidate PII.
+          </p>
         </div>
-      </aside>
-    </main>
+      </main>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Tool-call rendering — generative UI.
-//
-// Each tool returns `{ rows, display }` where `display.kind` is
-// "table" | "bar" | "line". We render a component per kind, show the
-// calling → result transition, and handle empty/error states. The output
-// arrives as the agent streams, so the card updates live.
+// Sidebar
+// ---------------------------------------------------------------------------
+type Workspace = { id: string; slug: string; name: string };
+
+function Sidebar({
+  workspaces,
+  activeWorkspace,
+  setActiveWorkspace,
+  role,
+  setRole,
+  pipeline,
+}: {
+  workspaces: Workspace[];
+  activeWorkspace: string;
+  setActiveWorkspace: (v: string) => void;
+  role: string;
+  setRole: (v: (typeof ROLES)[number]) => void;
+  pipeline: Array<{ stage: string; count: number | string }>;
+}) {
+  return (
+    <aside className="flex min-h-0 flex-col gap-6 border-r border-border bg-card px-4 py-5">
+      <div className="flex items-center gap-2.5 px-1">
+        <span className="grid h-8 w-8 place-items-center rounded-md bg-primary text-primary-foreground">
+          <SparkIcon />
+        </span>
+        <div className="leading-tight">
+          <div className="text-sm font-semibold">ATS Copilot</div>
+          <div className="text-[11px] text-muted-foreground">
+            Recruiting analytics
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <Field label="Workspace">
+          <Select
+            value={activeWorkspace}
+            onChange={(e) => setActiveWorkspace(e.target.value)}
+          >
+            {workspaces.map((w) => (
+              <option key={w.id} value={w.slug}>
+                {w.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Role">
+          <Select
+            value={role}
+            onChange={(e) => setRole(e.target.value as (typeof ROLES)[number])}
+          >
+            {ROLES.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+
+      {/* Live pipeline for the active workspace (scoped tRPC read) */}
+      <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border p-3">
+        <div className="mb-2.5 flex items-center justify-between">
+          <h2 className="text-xs font-semibold">Pipeline</h2>
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            by stage
+          </span>
+        </div>
+        {pipeline.length > 0 ? (
+          <ul className="space-y-2">
+            {pipeline.map((row) => {
+              const max = Math.max(
+                1,
+                ...pipeline.map((r) => Number(r.count)),
+              );
+              const val = Number(row.count);
+              return (
+                <li key={row.stage} className="text-xs">
+                  <div className="mb-1 flex justify-between">
+                    <span className="capitalize text-foreground">
+                      {row.stage}
+                    </span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {val}
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-accent"
+                      style={{ width: `${(val / max) * 100}%` }}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="text-xs text-muted-foreground">No data.</p>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between px-1">
+        <span className="text-[11px] text-muted-foreground">Theme</span>
+        <ThemeToggle />
+      </div>
+    </aside>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <div className="relative">
+      <select
+        {...props}
+        className="w-full appearance-none rounded-md border border-input bg-background px-3 py-2 text-sm capitalize outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground">
+        <ChevronIcon />
+      </span>
+    </div>
+  );
+}
+
+function RoleBadge({ role }: { role: string }) {
+  return (
+    <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium capitalize text-muted-foreground">
+      {role}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
+type ChatMessage = {
+  id: string;
+  role: string;
+  parts: Array<{ type: string; text?: string } & Record<string, unknown>>;
+};
+
+function MessageRow({ message }: { message: ChatMessage }) {
+  const isUser = message.role === "user";
+  if (isUser) {
+    const text = message.parts
+      .filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join("");
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-primary px-4 py-2 text-sm text-primary-foreground">
+          {text}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex gap-3">
+      <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-md bg-accent/10 text-accent">
+        <SparkIcon />
+      </span>
+      <div className="min-w-0 flex-1 space-y-3">
+        {message.parts.map((part, i) => {
+          if (part.type === "text") {
+            return (
+              <div key={i} className="text-sm leading-relaxed text-foreground">
+                <Streamdown>{part.text ?? ""}</Streamdown>
+              </div>
+            );
+          }
+          if (part.type.startsWith("tool-")) {
+            return <ToolCall key={i} part={part} />;
+          }
+          return null;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({
+  onPick,
+  disabled,
+}: {
+  onPick: (t: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-5 py-16 text-center">
+      <span className="grid h-12 w-12 place-items-center rounded-xl bg-accent/10 text-accent">
+        <SparkIcon large />
+      </span>
+      <div className="space-y-1">
+        <h2 className="text-balance text-base font-semibold">
+          Ask about your recruiting data
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          The copilot queries this workspace and renders charts and tables.
+        </p>
+      </div>
+      <div className="flex flex-wrap justify-center gap-2">
+        {EXAMPLE_PROMPTS.map((p) => (
+          <button
+            key={p}
+            type="button"
+            disabled={disabled}
+            onClick={() => onPick(p)}
+            className="rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Thinking() {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-accent/10 text-accent">
+        <SparkIcon />
+      </span>
+      <div className="flex gap-1" aria-hidden>
+        {[0, 150, 300].map((d) => (
+          <span
+            key={d}
+            className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground"
+            style={{ animationDelay: `${d}ms` }}
+          />
+        ))}
+      </div>
+      <span role="status" className="sr-only">
+        Copilot is working
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tool-call rendering — generative UI keyed on `display.kind`.
 // ---------------------------------------------------------------------------
 type ToolOutput = { rows?: Row[]; display?: Display; error?: string };
 type ToolPart = {
   type: string;
   state?: string;
-  input?: unknown;
   output?: ToolOutput;
   errorText?: string;
 };
@@ -223,28 +420,29 @@ function ToolCall({ part }: { part: unknown }) {
   const p = part as ToolPart;
   const name = p.type.replace(/^tool-/, "");
   const done = p.state === "output-available";
-  // Either the framework errored the call, or our tool returned a structured error.
   const errored = p.state === "output-error" || Boolean(p.output?.error);
   const errorText = p.errorText ?? p.output?.error;
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-xs shadow-sm">
-      <div className="flex items-center gap-2 font-medium text-gray-700">
+    <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs">
         {!done && !errored && (
-          <span
-            aria-hidden="true"
-            className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500 motion-reduce:animate-none"
-          />
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
         )}
-        <span className="font-mono">{name}</span>
-        <span className="font-normal text-gray-400">
-          {errored ? "· error" : done ? "· result" : "· calling…"}
+        <span className="font-mono font-medium text-foreground">{name}</span>
+        <span className="text-muted-foreground">
+          {errored ? "error" : done ? "result" : "running…"}
         </span>
       </div>
-      {errored && (
-        <p className="mt-1.5 text-red-600">{errorText ?? "Tool call failed."}</p>
-      )}
-      {done && !errored && <Artifact output={p.output} />}
+      <div className="px-3 py-3">
+        {errored ? (
+          <p className="text-xs text-destructive">
+            {errorText ?? "Tool call failed."}
+          </p>
+        ) : done ? (
+          <Artifact output={p.output} />
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -253,7 +451,7 @@ function Artifact({ output }: { output?: ToolOutput }) {
   const rows = output?.rows ?? [];
   const display = output?.display;
   if (rows.length === 0) {
-    return <p className="mt-2 text-gray-400">No matching data.</p>;
+    return <p className="text-xs text-muted-foreground">No matching data.</p>;
   }
   if (display?.kind === "bar") return <BarChart rows={rows} display={display} />;
   if (display?.kind === "line") return <LineChart rows={rows} display={display} />;
@@ -274,27 +472,29 @@ function BarChart({
 }) {
   const max = Math.max(1, ...rows.map((r) => toNum(r[display.y])));
   return (
-    <figure className="mt-2 space-y-1.5">
-      <figcaption className="mb-1 font-medium text-gray-600">
+    <figure className="space-y-2">
+      <figcaption className="text-xs font-medium text-muted-foreground">
         {display.title}
       </figcaption>
-      {rows.map((r, i) => {
-        const value = toNum(r[display.y]);
-        return (
-          <div key={i} className="flex items-center gap-2">
-            <span className="w-28 shrink-0 truncate text-right text-gray-500">
-              {String(r[display.x] ?? "")}
-            </span>
-            <div className="flex h-4 flex-1 items-center">
-              <div
-                className="h-full rounded-sm bg-blue-500/80"
-                style={{ width: `${(value / max) * 100}%` }}
-              />
-              <span className="ml-1.5 tabular-nums text-gray-600">{value}</span>
+      <div className="space-y-1.5">
+        {rows.map((r, i) => {
+          const value = toNum(r[display.y]);
+          return (
+            <div key={i} className="flex items-center gap-2 text-xs">
+              <span className="w-28 shrink-0 truncate text-right capitalize text-muted-foreground">
+                {String(r[display.x] ?? "")}
+              </span>
+              <div className="flex h-5 flex-1 items-center gap-1.5">
+                <div
+                  className="h-full min-w-[2px] rounded-md bg-accent"
+                  style={{ width: `${(value / max) * 100}%` }}
+                />
+                <span className="tabular-nums text-foreground">{value}</span>
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </figure>
   );
 }
@@ -308,7 +508,7 @@ function LineChart({
 }) {
   const W = 320;
   const H = 80;
-  const pad = 4;
+  const pad = 6;
   const values = rows.map((r) => toNum(r[display.y]));
   const max = Math.max(1, ...values);
   const stepX = rows.length > 1 ? (W - pad * 2) / (rows.length - 1) : 0;
@@ -318,10 +518,11 @@ function LineChart({
     return [x, y] as const;
   });
   const path = points.map(([x, y]) => `${x},${y}`).join(" ");
+  const area = `${pad},${H - pad} ${path} ${pad + (rows.length - 1) * stepX},${H - pad}`;
 
   return (
-    <figure className="mt-2">
-      <figcaption className="mb-1 font-medium text-gray-600">
+    <figure className="space-y-2">
+      <figcaption className="text-xs font-medium text-muted-foreground">
         {display.title}
       </figcaption>
       <svg
@@ -331,18 +532,21 @@ function LineChart({
         role="img"
         aria-label={display.title}
       >
+        <polygon points={area} fill="var(--accent-soft)" />
         <polyline
           points={path}
           fill="none"
-          stroke="rgb(59 130 246)"
-          strokeWidth={1.5}
+          stroke="var(--accent)"
+          strokeWidth={2}
+          strokeLinejoin="round"
+          strokeLinecap="round"
           vectorEffect="non-scaling-stroke"
         />
         {points.map(([x, y], i) => (
-          <circle key={i} cx={x} cy={y} r={2} fill="rgb(59 130 246)" />
+          <circle key={i} cx={x} cy={y} r={2.5} fill="var(--accent)" />
         ))}
       </svg>
-      <div className="flex justify-between text-gray-400">
+      <div className="flex justify-between text-[11px] text-muted-foreground">
         <span>{String(rows[0]?.[display.x] ?? "")}</span>
         <span>peak {max}</span>
         <span>{String(rows[rows.length - 1]?.[display.x] ?? "")}</span>
@@ -351,40 +555,138 @@ function LineChart({
   );
 }
 
-function DataTable({
-  rows,
-  display,
-}: {
-  rows: Row[];
-  display?: Display;
-}) {
+function DataTable({ rows, display }: { rows: Row[]; display?: Display }) {
   const columns =
     display && display.kind === "table" && display.columns.length > 0
       ? display.columns
       : Object.keys(rows[0]);
 
   return (
-    <table className="mt-2 w-full border-collapse text-left">
-      <thead>
-        <tr className="text-gray-400">
-          {columns.map((c) => (
-            <th key={c} className="border-b border-gray-100 py-1 pr-2 font-medium">
-              {c}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.slice(0, 12).map((row, i) => (
-          <tr key={i} className="text-gray-600">
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-left text-xs">
+        <thead>
+          <tr className="text-muted-foreground">
             {columns.map((c) => (
-              <td key={c} className="border-b border-gray-50 py-1 pr-2">
-                {String(row[c] ?? "")}
-              </td>
+              <th
+                key={c}
+                className="border-b border-border py-1.5 pr-3 font-medium capitalize"
+              >
+                {c}
+              </th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.slice(0, 12).map((row, i) => (
+            <tr key={i} className="text-foreground">
+              {columns.map((c) => (
+                <td
+                  key={c}
+                  className="border-b border-border/60 py-1.5 pr-3 tabular-nums"
+                >
+                  {String(row[c] ?? "")}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Theme toggle
+// ---------------------------------------------------------------------------
+function ThemeToggle() {
+  const [dark, setDark] = useState(false);
+  useEffect(() => {
+    const stored = localStorage.getItem("theme");
+    const isDark =
+      stored === "dark" ||
+      (!stored && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    setDark(isDark);
+    document.documentElement.classList.toggle("dark", isDark);
+  }, []);
+
+  function toggle() {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.classList.toggle("dark", next);
+    localStorage.setItem("theme", next ? "dark" : "light");
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+      className="grid h-7 w-7 place-items-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {dark ? <SunIcon /> : <MoonIcon />}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Icons (inline, no dependency)
+// ---------------------------------------------------------------------------
+function SparkIcon({ large }: { large?: boolean }) {
+  const s = large ? 22 : 15;
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M12 3l1.9 5.6L19.5 10l-5.6 1.4L12 17l-1.9-5.6L4.5 10l5.6-1.4L12 3z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+function SendIcon() {
+  return (
+    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M4 12l16-8-6 16-3-7-7-1z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+function ChevronIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M6 9l6 6 6-6"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+function MoonIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+function SunIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx={12} cy={12} r={4} stroke="currentColor" strokeWidth={2} />
+      <path
+        d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
