@@ -16,12 +16,14 @@
       "service": "ats-analytics-copilot"
     }
   ],
-  // Non-secret config. Add AI_GATEWAY_BASE_URL here once the Cloudflare AI
-  // Gateway exists (it ends in /anthropic/v1).
+  // Non-secret config. AI_GATEWAY_BASE_URL is set as a secret instead (keeps the
+  // account id out of the repo); AI_GATEWAY_CACHE_TTL makes our requests send
+  // cf-aig-cache-ttl once the gateway is in the path.
   "vars": {
     "AI_PROVIDER": "anthropic",
-    "ANTHROPIC_MODEL": "claude-sonnet-4-6"
+    "ANTHROPIC_MODEL": "claude-sonnet-4-6",
+    "AI_GATEWAY_CACHE_TTL": "3600"
   }
   // Secrets — set with `wrangler secret put <NAME>` (never committed):
-  //   ANTHROPIC_API_KEY, DATABASE_URL
+  //   ANTHROPIC_API_KEY, DATABASE_URL, AI_GATEWAY_BASE_URL
 }
