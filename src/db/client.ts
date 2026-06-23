@@ -19,19 +19,22 @@ import * as schema from "./schema";
  */
 type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 
+/**
+ * Neon in production (Workers) and whenever DATABASE_URL is explicitly set (e.g.
+ * seeding Neon locally); PGlite otherwise. The NODE_ENV half also lets a
+ * production `next build` fold the condition to `true` so the bundler drops the
+ * PGlite branch (keeps its wasm out of the Worker). Exported so the query layer
+ * knows which transaction model to use for RLS (batch vs interactive).
+ */
+export const isNeon =
+  process.env.NODE_ENV === "production" || Boolean(process.env.DATABASE_URL);
+
 // In Next dev, modules can be re-evaluated across HMR; stash the PGlite handle
 // on globalThis so we don't open a second handle to the same directory.
 const globalForDb = globalThis as unknown as { __pglite__?: unknown };
 
 async function createDb(): Promise<Db> {
-  // Use Neon in production (Workers) and whenever DATABASE_URL is explicitly set
-  // (e.g. seeding Neon locally). The NODE_ENV check is first on purpose: a
-  // production `next build` inlines it to "production", so the condition folds to
-  // `true` and the bundler dead-code-eliminates the PGlite branch below. That
-  // keeps PGlite's wasm + Node built-ins out of the Worker bundle entirely. Local
-  // dev/tests/evals run under `next dev`/vitest (NODE_ENV !== "production") with no
-  // DATABASE_URL, so they keep using zero-setup PGlite.
-  if (process.env.NODE_ENV === "production" || process.env.DATABASE_URL) {
+  if (isNeon) {
     const { neon } = await import("@neondatabase/serverless");
     const { drizzle } = await import("drizzle-orm/neon-http");
     // DATABASE_URL is unset during the build itself (no request runs then), so
@@ -44,9 +47,13 @@ async function createDb(): Promise<Db> {
 
   const { PGlite } = await import("@electric-sql/pglite");
   const { drizzle } = await import("drizzle-orm/pglite");
+  // Under the test runner use an in-memory database: vitest runs files in
+  // parallel workers, and a shared file-backed PGlite directory would have two
+  // wasm instances contend for the same files (and abort). In dev and `db:seed`
+  // we stay file-backed so the seed and `next dev` share one database.
   const pglite =
     (globalForDb.__pglite__ as InstanceType<typeof PGlite> | undefined) ??
-    new PGlite(env.PGLITE_DIR);
+    (process.env.VITEST ? new PGlite() : new PGlite(env.PGLITE_DIR));
   // Only reachable outside production, so always cache for HMR reuse.
   globalForDb.__pglite__ = pglite;
   return drizzle(pglite, { schema }) as unknown as Db;
@@ -55,19 +62,22 @@ async function createDb(): Promise<Db> {
 export const db = await createDb();
 
 /**
- * Memoized schema initialization. Concurrent importers share one promise so
- * the raw DDL runs exactly once per process. The DDL is `CREATE TABLE IF NOT
- * EXISTS`, so it's safe on both backends; for Neon it's typically a no-op
- * because the schema was already provisioned by the seed step.
+ * Memoized schema initialization for local/dev/test. Concurrent importers share
+ * one promise so the DDL runs once per process.
+ *
+ * On Neon (production) this is a no-op: the schema and RLS policies are
+ * provisioned once by the seed step (`runMigrations`), not on every cold start
+ * (which would be wasteful and could race across isolates).
  */
 let initPromise: Promise<void> | null = null;
 
 export function ensureSchema(): Promise<void> {
   if (!initPromise) {
     initPromise = (async () => {
+      if (isNeon) return;
       // Imported lazily to avoid a circular import (migrate.ts imports `db`).
-      const { ensureSchema: run } = await import("./migrate");
-      await run();
+      const { runMigrations } = await import("./migrate");
+      await runMigrations();
     })();
   }
   return initPromise;
