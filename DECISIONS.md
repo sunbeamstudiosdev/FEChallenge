@@ -155,14 +155,19 @@ de-identified rows with no PII in the response. It routes through the Cloudflare
 AI Gateway (`ats-copilot`, authenticated) with caching and rate limiting on, which
 I verified by the repeated-request latency drop described in the stretch section.
 
-One wart to log: OpenNext's esbuild still bundles PGlite's wasm glue into the
-Worker even though it is never used there (`DATABASE_URL` is always set in
-production, so the PGlite branch is dead code). It deploys and runs fine because
-that code never executes, but it bloats the bundle and triggers a direct-eval
-warning. `serverExternalPackages` keeps PGlite out of Next's own bundle but
-OpenNext re-bundles the server function and pulls it back in. The clean fix is to
-mark `@electric-sql/pglite` external in the OpenNext server bundle, which I'd do
-next.
+Keeping PGlite out of the Worker bundle took a deliberate trick. OpenNext
+re-bundles the server function with its own esbuild pass and doesn't expose an
+"externals" hook, so `serverExternalPackages` alone wasn't enough, and esbuild
+followed the dynamic `import("@electric-sql/pglite")` and pulled the wasm in. The
+fix lives in `src/db/client.ts`: the driver is chosen with
+`if (process.env.NODE_ENV === "production" || process.env.DATABASE_URL)` and the
+PGlite branch sits in the `else`. A production `next build` inlines `NODE_ENV`, so
+Turbopack dead-code-eliminates the PGlite branch before OpenNext's esbuild ever
+sees it. Verified the deployed bundle has no PGlite wasm (zero `ASM_CONSTS`, no
+`.wasm` files) while local dev, tests, and evals still use PGlite because they run
+under `next dev`/vitest where `NODE_ENV` isn't production. A first attempt using a
+non-analyzable dynamic import worked for esbuild but broke Turbopack ("expression
+is too dynamic"), which is why the NODE_ENV gate is the right lever.
 
 ## Working with the agent
 

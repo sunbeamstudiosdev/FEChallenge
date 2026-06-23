@@ -24,10 +24,21 @@ type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 const globalForDb = globalThis as unknown as { __pglite__?: unknown };
 
 async function createDb(): Promise<Db> {
-  const url = process.env.DATABASE_URL;
-  if (url) {
+  // Use Neon in production (Workers) and whenever DATABASE_URL is explicitly set
+  // (e.g. seeding Neon locally). The NODE_ENV check is first on purpose: a
+  // production `next build` inlines it to "production", so the condition folds to
+  // `true` and the bundler dead-code-eliminates the PGlite branch below. That
+  // keeps PGlite's wasm + Node built-ins out of the Worker bundle entirely. Local
+  // dev/tests/evals run under `next dev`/vitest (NODE_ENV !== "production") with no
+  // DATABASE_URL, so they keep using zero-setup PGlite.
+  if (process.env.NODE_ENV === "production" || process.env.DATABASE_URL) {
     const { neon } = await import("@neondatabase/serverless");
     const { drizzle } = await import("drizzle-orm/neon-http");
+    // DATABASE_URL is unset during the build itself (no request runs then), so
+    // fall back to a placeholder that parses but is never queried. On Workers the
+    // real value is always present from the secret.
+    const url =
+      process.env.DATABASE_URL ?? "postgresql://user:pass@placeholder.neon.tech/db";
     return drizzle(neon(url), { schema }) as unknown as Db;
   }
 
@@ -36,7 +47,8 @@ async function createDb(): Promise<Db> {
   const pglite =
     (globalForDb.__pglite__ as InstanceType<typeof PGlite> | undefined) ??
     new PGlite(env.PGLITE_DIR);
-  if (process.env.NODE_ENV !== "production") globalForDb.__pglite__ = pglite;
+  // Only reachable outside production, so always cache for HMR reuse.
+  globalForDb.__pglite__ = pglite;
   return drizzle(pglite, { schema }) as unknown as Db;
 }
 
