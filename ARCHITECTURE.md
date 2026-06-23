@@ -36,6 +36,10 @@ PGlite (local/test) or Neon Postgres (prod)   ← src/db/client.ts picks the dri
 
 The same `display` hint that comes back from a tool drives the chart/table the UI renders, and the same query layer is what the evals and the guarantee tests assert against. One contract, used three ways.
 
+**Agent behavior** lives in the system prompt (`src/agent/provider.ts`), each backed by an eval: fan out to multiple tools on a compound question, ask one clarifying question instead of guessing when a question is ambiguous, and recover from a tool error. Recovery rests on `guard()` in `tools.ts`, which turns a thrown query error into a structured `{ error }` the model can act on instead of throwing into the stream.
+
+**Product touches** in `page.tsx`: chart bars are clickable (they ask a contextual follow-up the model routes to the right tool), suggested follow-ups appear under each answer, and the conversation persists to localStorage scoped per workspace+role. A small React context provides the chat's `send` to deep components instead of prop-drilling.
+
 ## The two guarantees, in code
 
 **Tenant scope: `scopeWhere(table, ctx, extra)` in `src/db/analytics.ts`.**
@@ -119,7 +123,10 @@ Schema and tenant Row-Level Security live in `src/db/migrate.ts` (see DECISIONS 
   tenant table is imported outside the data layer).
 - `pnpm typecheck`: includes `pii-typing.assert.ts` (fails if an analyst row type
   ever exposes PII).
-- `pnpm eval`: Evalite: tenant isolation, PII, and (with a real model) answer
-  quality, with per-case traces in `pnpm eval:dev`.
+- `pnpm eval`: Evalite: tenant isolation, PII, answer quality, plus trajectory
+  (right tool + step budget + token ceiling), compound fan-out, clarifying turn,
+  tool-error recovery, and a judge-the-judge calibration check. Model-dependent
+  scorers are gated on a real provider so CI stays green offline; per-case traces
+  in `pnpm eval:dev`.
 - `pnpm build` · `pnpm cf:deploy`.
 - CI (`.github/workflows/ci.yml`) runs typecheck + lint + tests + evals on every push/PR.
