@@ -3,7 +3,14 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Streamdown } from "streamdown";
 
 import { ROLES } from "@/db/permissions";
@@ -21,6 +28,49 @@ const EXAMPLE_PROMPTS = [
   "Which jobs have the most applications?",
   "How have applications trended over time?",
 ];
+
+/**
+ * Lets deep components (a clickable chart bar, a follow-up chip) send a
+ * follow-up question without prop-drilling the chat's `send` through every
+ * layer. Provided once at the transcript root.
+ */
+const AskContext = createContext<((text: string) => void) | null>(null);
+const useAsk = () => useContext(AskContext);
+
+/** Contextual next questions, keyed on the tool that produced the last answer. */
+const FOLLOW_UPS: Record<string, string[]> = {
+  applicationCountByStage: [
+    "Which jobs have the most applications?",
+    "How have applications trended over time?",
+  ],
+  applicationsByJob: [
+    "How does my pipeline look by stage?",
+    "Where are candidates coming from?",
+  ],
+  candidatesBySource: [
+    "Which jobs have the most applications?",
+    "How have applications trended over time?",
+  ],
+  applicationsOverTime: [
+    "How does my pipeline look by stage?",
+    "Which jobs have the most applications?",
+  ],
+  findCandidates: [
+    "How does my pipeline look by stage?",
+    "Where are candidates coming from?",
+  ],
+};
+
+/** Suggested follow-ups for the latest assistant turn (deduped, capped at 3). */
+function suggestionsFor(message: ChatMessage | undefined): string[] {
+  if (!message || message.role !== "assistant") return [];
+  const tools = message.parts
+    .filter((p) => p.type.startsWith("tool-"))
+    .map((p) => p.type.replace(/^tool-/, ""));
+  const out: string[] = [];
+  for (const t of tools) for (const q of FOLLOW_UPS[t] ?? []) if (!out.includes(q)) out.push(q);
+  return out.slice(0, 3);
+}
 
 export default function Page() {
   const { activeWorkspace, setActiveWorkspace, role, setRole } = useTenant();
@@ -45,13 +95,38 @@ export default function Page() {
     [activeWorkspace, role],
   );
 
-  const { messages, sendMessage, status } = useChat({
+  const { messages, sendMessage, setMessages, status } = useChat({
     id: `${activeWorkspace}:${role}`,
     transport,
   });
 
   const [input, setInput] = useState("");
   const busy = status === "streaming" || status === "submitted";
+
+  // Conversation persistence, scoped per workspace+role so switching tenants
+  // keeps each conversation separate (and never crosses them). One effect:
+  // on a key change restore that conversation from localStorage; otherwise
+  // persist the current messages. The ref starts null so the first run always
+  // restores (instead of clobbering storage with the empty initial state).
+  const storageKey = `chat:${activeWorkspace}:${role}`;
+  const loadedKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (loadedKey.current !== storageKey) {
+      loadedKey.current = storageKey;
+      try {
+        const raw = localStorage.getItem(storageKey);
+        setMessages(raw ? JSON.parse(raw) : []);
+      } catch {
+        setMessages([]);
+      }
+      return; // don't persist on the restore pass
+    }
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(messages));
+    } catch {
+      // ignore quota / serialization errors; persistence is best-effort
+    }
+  }, [messages, storageKey, setMessages]);
 
   // Auto-scroll the transcript to the latest content as it streams.
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -99,16 +174,19 @@ export default function Page() {
           className="flex-1 overflow-y-auto scroll-smooth px-6 py-6"
           aria-live="polite"
         >
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-            {messages.length === 0 ? (
-              <EmptyState onPick={send} disabled={busy} />
-            ) : (
-              messages.map((message) => (
-                <MessageRow key={message.id} message={message} />
-              ))
-            )}
-            {busy && <Thinking />}
-          </div>
+          <AskContext.Provider value={busy ? null : send}>
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+              {messages.length === 0 ? (
+                <EmptyState onPick={send} disabled={busy} />
+              ) : (
+                messages.map((message) => (
+                  <MessageRow key={message.id} message={message as ChatMessage} />
+                ))
+              )}
+              {busy && <Thinking />}
+              {!busy && <Suggestions message={messages[messages.length - 1] as ChatMessage} />}
+            </div>
+          </AskContext.Provider>
         </div>
 
         {/* Composer */}
@@ -405,6 +483,27 @@ function Thinking() {
   );
 }
 
+/** Contextual "ask next" chips under the latest answer. */
+function Suggestions({ message }: { message: ChatMessage | undefined }) {
+  const ask = useAsk();
+  const suggestions = suggestionsFor(message);
+  if (!ask || suggestions.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-2 pl-10" aria-label="Suggested follow-ups">
+      {suggestions.map((q) => (
+        <button
+          key={q}
+          type="button"
+          onClick={() => ask(q)}
+          className="rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {q}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Tool-call rendering — generative UI keyed on `display.kind`.
 // ---------------------------------------------------------------------------
@@ -507,6 +606,20 @@ function toNum(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Turn a clicked bar category into a useful follow-up question. */
+function drillPrompt(dimension: string, label: string): string {
+  switch (dimension) {
+    case "stage":
+      return `Show me the candidates in the ${label} stage.`;
+    case "source":
+      return `Show me the candidates from ${label}.`;
+    case "job":
+      return `How is the ${label} role doing across stages?`;
+    default:
+      return `Tell me more about ${label}.`;
+  }
+}
+
 function BarChart({
   rows,
   display,
@@ -514,19 +627,26 @@ function BarChart({
   rows: Row[];
   display: Extract<Display, { kind: "bar" }>;
 }) {
+  const ask = useAsk();
   const max = Math.max(1, ...rows.map((r) => toNum(r[display.y])));
   return (
     <figure className="space-y-2">
       <figcaption className="text-xs font-medium text-muted-foreground">
         {display.title}
+        {ask && (
+          <span className="ml-2 font-normal normal-case text-muted-foreground/70">
+            (click a bar to dig in)
+          </span>
+        )}
       </figcaption>
       <div className="space-y-1.5">
         {rows.map((r, i) => {
           const value = toNum(r[display.y]);
-          return (
-            <div key={i} className="flex items-center gap-2 text-xs">
+          const label = String(r[display.x] ?? "");
+          const bar = (
+            <>
               <span className="w-28 shrink-0 truncate text-right capitalize text-muted-foreground">
-                {String(r[display.x] ?? "")}
+                {label}
               </span>
               <div className="flex h-5 flex-1 items-center gap-1.5">
                 <div
@@ -535,6 +655,21 @@ function BarChart({
                 />
                 <span className="tabular-nums text-foreground">{value}</span>
               </div>
+            </>
+          );
+          return ask ? (
+            <button
+              key={i}
+              type="button"
+              onClick={() => ask(drillPrompt(display.x, label))}
+              title={`Ask a follow-up about ${label}`}
+              className="flex w-full items-center gap-2 rounded-sm text-xs transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {bar}
+            </button>
+          ) : (
+            <div key={i} className="flex items-center gap-2 text-xs">
+              {bar}
             </div>
           );
         })}
