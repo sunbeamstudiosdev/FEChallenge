@@ -41,10 +41,10 @@ The same `display` hint that comes back from a tool drives the chart/table the U
 **Tenant scope: `scopeWhere(table, ctx, extra)` in `src/db/analytics.ts`.**
 Every query takes `ctx` as its first argument and routes its `WHERE` through
 `scopeWhere`, which AND-s `workspace_id = ctx.workspaceId` into the filter. You
-cannot express a query without the tenant scope. Joins pin *both* tenant tables to the workspace (see `applicationsByJob`, `findCandidates`).
+cannot express a query without the tenant scope. Joins pin *both* tenant tables to the workspace (see `applicationsByJob`, `findCandidates`). This is enforced three ways: `scopeWhere` at the app layer, RLS at the database layer (`migrate.ts`), and a build-time ESLint fence (`eslint.config.mjs`) that makes importing a tenant table outside `src/db/**` a lint error, so a cross-tenant query can't be written elsewhere in the first place.
 
 **PII: `candidateSelection(ctx)` in `src/db/analytics.ts`.**
-It builds the candidate column projection from `canReadColumn` (`src/db/permissions.ts`). For an analyst, name/email/phone are never added to the `SELECT`, so the database never returns them. PII is unrepresentable in the result, not stripped afterward.
+It builds the candidate column projection from `canReadColumn` (`src/db/permissions.ts`). For an analyst, name/email/phone are never added to the `SELECT`, so the database never returns them. PII is unrepresentable in the result, not stripped afterward. It is also gated at compile time: `findCandidates` returns a role-narrowed `CandidateRow<R>`, so `row.email` is a *type error* for an analyst (proven by `src/db/pii-typing.assert.ts` under `tsc` in CI). SQL omits it, the type hides it, and the adversarial test proves a real answer never carries it.
 
 **Identity comes only from server context.** `workspaceId` and `role` are read from the `x-workspace` / `x-role` headers in `src/server/context.ts`. No tool accepts a `workspaceId` or `role` argument (there is a test that fails if one ever does), so the model can never reach another workspace.
 
@@ -93,7 +93,10 @@ offerAcceptanceByJob: tool({
 ```
 
 **3. Pick a `display` kind** (`bar` | `line` | `table`). The UI renders it
-automatically from the hint. No UI changes needed.
+automatically from the hint. No UI changes needed. Optionally pass a third
+argument to `ok(...)`, a headline `{ label, value, trend? }` derived from the
+rows, and the UI shows it as a stat card above the chart (compute it in the tool,
+never let the model supply the number).
 
 **4. Add a benchmark** in `evals/copilot.eval.ts` (and, if it touches candidates, an assertion in `src/__tests__/guarantees.test.ts`).
 
@@ -112,7 +115,11 @@ Schema and tenant Row-Level Security live in `src/db/migrate.ts` (see DECISIONS 
 ## Verification
 
 - `pnpm test`: the guarantee suite (the CI gate; goes red on a real regression).
+- `pnpm lint`: includes the tenant-table import fence (fails the build if a
+  tenant table is imported outside the data layer).
+- `pnpm typecheck`: includes `pii-typing.assert.ts` (fails if an analyst row type
+  ever exposes PII).
 - `pnpm eval`: Evalite: tenant isolation, PII, and (with a real model) answer
   quality, with per-case traces in `pnpm eval:dev`.
-- `pnpm typecheck` · `pnpm build` · `pnpm cf:deploy`.
-- CI (`.github/workflows/ci.yml`) runs typecheck + tests + evals on every push/PR.
+- `pnpm build` · `pnpm cf:deploy`.
+- CI (`.github/workflows/ci.yml`) runs typecheck + lint + tests + evals on every push/PR.

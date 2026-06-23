@@ -27,14 +27,23 @@ findCandidates) I pin both tenant tables to the workspace instead of trusting th
 rather than "fetch everything then strip it." `candidateSelection(ctx)` builds the SQL projection by asking `canReadColumn` per column, so for an analyst the
 name/email/phone columns are never added to the SELECT. The database never returns them, so there's nothing to leak later. I picked this over redaction because redaction leaves PII sitting in memory and only takes one forgotten code path to go wrong.
 
+I then took this one layer further, to compile time. `findCandidates` is generic on the caller's role and returns a role-narrowed `CandidateRow<R>`: for an analyst the PII keys are absent from the type itself, so `row.email` is a type error at the call site, not just empty at runtime. It's the static twin of `candidateSelection`, and both are driven by the same `canReadColumn` rule so they can't disagree. A small assert file proves it under `tsc` in CI, with a `@ts-expect-error` on each analyst PII access; if the type ever stops hiding PII, those directives go unused and the typecheck fails. So PII is now blocked three ways: the SQL never selects it, the type never exposes it, and the adversarial test proves a real analyst answer never carries it. I kept the headline numbers grounded for the same reason it matters here: an analytics product should never invent a figure.
+
 **Row-Level Security (second layer).** `scopeWhere` is the app-layer guarantee; RLS is the database-layer backstop under it. The app reads as a restricted `app_user` role with a per-table policy that only returns rows for the workspace set in `app.workspace_id`, which `scoped()` sets per request (atomically with the query: a batch on neon-http, an interactive transaction on PGlite). So even a query that forgot `scopeWhere` would still only see one workspace's rows. A test proves it: a raw read with no `scopeWhere`, only the RLS key, still comes back single-tenant. The seed writes as the owner (which bypasses RLS) to load both tenants in one pass.
+
+**Build-time import fence (third layer).** The two layers above stop a bad query at runtime; this one stops it from being written at all. A custom ESLint rule forbids importing the tenant table objects (candidates, applications, jobs, users) anywhere outside the data layer (`src/db/**`). To express a cross-tenant query you have to import a tenant table, and that import is now a lint error everywhere but `analytics.ts`, so the only place those tables can be queried is the layer that routes through `scopeWhere` and RLS. "You can't forget the workspace filter" is a build failure in CI, not a code-review comment. The `workspaces` directory table (no workspace_id, read across tenants for the switcher) is intentionally left un-fenced, and tests are exempt because the RLS-proof test deliberately does a raw read. One honest limit: it's path-based, so a re-export could slip past it. Nobody does that here, and RLS is still the backstop if they did. I verified the rule fires by adding a forbidden import and watching lint go red.
 
 **Tools.** I added five small tools, one analytical question each:
 applicationCountByStage (the reference), applicationsByJob, candidatesBySource,
 applicationsOverTime, and findCandidates. They take typed Zod inputs with enums for the fixed choices (stage, source, time bucket), and the descriptions say when to call the tool, not just what it does, which helps the model pick the right one. None of them takes a workspaceId or role; those only come from server context. If a tool accepted a workspaceId, a crafted message could ask for someone else's data, and that's the worst case here. Each tool body is wrapped in a small `guard()` so a query failure comes back as a structured error the model can recover from instead of throwing into the stream.
 
 **Generative UI.** Tool results carry a `display` hint (bar, line, or table) and
-the chat page renders a component per kind as the agent streams. I built the bar
+the chat page renders a component per kind as the agent streams. Each result can
+also carry a headline metric (label, value, and an optional trend) that renders
+as a stat card above the chart, for example "Total applications 24, down 33% vs
+the prior week". The number is computed in the tool from the same rows it just
+queried, never produced by the model, so it stays grounded and the trend only
+shows when there's enough data to be honest about it. I built the bar
 and line charts with plain CSS and a small inline SVG instead of pulling in a chart library. Less polished, but no dependency and easy to reason about. The table only renders the columns that are actually present, so an analyst's table just doesn't have PII columns in it. The copilot's prose is rendered with Streamdown (the streaming markdown renderer Vercel ships), so bold, lists, and the like render correctly even while tokens are still streaming in. The one wrinkle is that Streamdown's docs assume Tailwind 4, so on this Tailwind 3 project I import its prebuilt styles.css rather than the v4 @source directive. Worth noting: ai-elements' Response/MessageResponse component is just a thin wrapper around Streamdown. I used the package directly to avoid the shadcn + Tailwind 4 init the ai-elements CLI assumes.
 
 **Visual design.** I used the shadcn-admin template as a visual reference, not a
@@ -103,9 +112,6 @@ conscious no, not an oversight.
 - **A sixth tool.** The query-layer and tool pattern is proven by five tools and
   documented in ARCHITECTURE.md under "add a tool in 5 minutes". Another one adds
   surface, not signal.
-- **Compile-time PII types.** The runtime guarantee is enforced and tested.
-  Generating per-role result types so the type checker also rejects PII for an
-  analyst is a nice next layer, not a missing one.
 - **Per-tenant rate limiting.** Cloudflare's gateway rate limit is per gateway.
   True per-workspace limits would use the gateway's dynamic routing keyed on the
   `cf-aig-metadata` I already send; I wired the metadata and stopped there rather
@@ -116,10 +122,18 @@ conscious no, not an oversight.
 What I did take past the bar earns its keep because it closes the core probe
 rather than adding surface: the adversarial guarantee suite that runs in CI and
 goes red the instant enforcement weakens, Row-Level Security as a second layer
-under `scopeWhere`, and the live deploy behind the gateway.
+under `scopeWhere`, the build-time import fence and compile-time PII types that
+make the guarantees structural in three independent ways, the grounded headline
+metric, and the live deploy behind the gateway.
 
-With another day: per-role result types, a typed structured answer the UI renders
-above the chart, and the remaining funnel tools.
+With another day: deeper eval maturity (trajectory checks that grade tool choice
+and step count, plus a cost and latency regression gate), a clarifying-question
+turn when a question is ambiguous instead of guessing, an eval that proves the
+agent recovers from a tool error, parallel tool calls for compound questions, and
+more product polish (drill-down from a chart, suggested follow-ups, conversation
+persistence). These are real depth, but each adds surface, and shipping all of
+them would trade the "knows where to stop" signal for breadth. I'd pick the
+highest-leverage two or three.
 
 ## Deployment (Cloudflare Workers + Neon)
 
