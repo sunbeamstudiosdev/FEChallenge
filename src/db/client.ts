@@ -44,9 +44,13 @@ async function createDb(): Promise<Db> {
 
   const { PGlite } = await import("@electric-sql/pglite");
   const { drizzle } = await import("drizzle-orm/pglite");
+  // Under the test runner use an in-memory database: vitest runs files in
+  // parallel workers, and a shared file-backed PGlite directory would have two
+  // wasm instances contend for the same files (and abort). In dev and `db:seed`
+  // we stay file-backed so the seed and `next dev` share one database.
   const pglite =
     (globalForDb.__pglite__ as InstanceType<typeof PGlite> | undefined) ??
-    new PGlite(env.PGLITE_DIR);
+    (process.env.VITEST ? new PGlite() : new PGlite(env.PGLITE_DIR));
   // Only reachable outside production, so always cache for HMR reuse.
   globalForDb.__pglite__ = pglite;
   return drizzle(pglite, { schema }) as unknown as Db;
