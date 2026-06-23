@@ -50,33 +50,35 @@ function timeTrend(rows: Row[], bucket: string): Trend | undefined {
   return { direction, label: `${pct > 0 ? "+" : ""}${pct}% vs the prior ${bucket}` };
 }
 
+const ok = (
+  rows: ToolResult["rows"],
+  display: Display,
+  headline?: Headline,
+): ToolResult => ({ rows, display, ...(headline ? { headline } : {}) });
+
+/**
+ * Wrap a tool body so a query failure returns a STRUCTURED error the model can
+ * recover from, rather than throwing into the stream and killing the turn. The
+ * model sees `{ error }` in the tool result and (per the system prompt) retries
+ * or explains. `fallback` is the display to show for the (empty) error result.
+ * Exported so a test can prove the repair path without reaching into the loop.
+ */
+export async function guard(
+  fallback: Display,
+  run: () => Promise<ToolResult>,
+): Promise<ToolResult> {
+  try {
+    return await run();
+  } catch (e) {
+    return {
+      rows: [],
+      display: fallback,
+      error: e instanceof Error ? e.message : "Query failed.",
+    };
+  }
+}
+
 export function buildTools(ctx: AnalyticsCtx) {
-  const ok = (
-    rows: ToolResult["rows"],
-    display: Display,
-    headline?: Headline,
-  ): ToolResult => ({ rows, display, ...(headline ? { headline } : {}) });
-
-  /**
-   * Wrap a tool body so a query failure returns a structured error the model
-   * can recover from, rather than throwing. `fallback` is the display to show
-   * for the (empty) error result.
-   */
-  const guard = async (
-    fallback: Display,
-    run: () => Promise<ToolResult>,
-  ): Promise<ToolResult> => {
-    try {
-      return await run();
-    } catch (e) {
-      return {
-        rows: [],
-        display: fallback,
-        error: e instanceof Error ? e.message : "Query failed.",
-      };
-    }
-  };
-
   return {
     // Applications by pipeline stage — the "how does my funnel look" question.
     applicationCountByStage: tool({
