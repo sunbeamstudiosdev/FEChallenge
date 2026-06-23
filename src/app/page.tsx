@@ -58,8 +58,10 @@ export default function Page() {
       {/* Conversation column */}
       <section className="flex min-h-0 flex-col rounded-lg border border-gray-200 bg-white">
         <header className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-          <div>
-            <h1 className="text-lg font-semibold">ATS Analytics Copilot</h1>
+          <div className="min-w-0">
+            <h1 className="text-balance text-lg font-semibold">
+              ATS Analytics Copilot
+            </h1>
             <p className="text-xs text-gray-500">
               Chat with this workspace&rsquo;s recruiting data.
             </p>
@@ -68,7 +70,7 @@ export default function Page() {
             <label className="flex items-center gap-1.5">
               <span className="text-gray-500">Workspace</span>
               <select
-                className="rounded border border-gray-300 px-2 py-1 text-sm"
+                className="rounded border border-gray-300 px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
                 value={activeWorkspace}
                 onChange={(e) => setActiveWorkspace(e.target.value)}
               >
@@ -82,7 +84,7 @@ export default function Page() {
             <label className="flex items-center gap-1.5">
               <span className="text-gray-500">Role</span>
               <select
-                className="rounded border border-gray-300 px-2 py-1 text-sm"
+                className="rounded border border-gray-300 px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
                 value={role}
                 onChange={(e) => setRole(e.target.value as (typeof ROLES)[number])}
               >
@@ -96,7 +98,10 @@ export default function Page() {
           </div>
         </header>
 
-        <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+        <div
+          className="flex-1 space-y-4 overflow-y-auto px-4 py-4"
+          aria-live="polite"
+        >
           {messages.length === 0 && (
             <p className="text-sm text-gray-400">
               Ask about this workspace &mdash; e.g. &ldquo;How does my pipeline
@@ -105,31 +110,42 @@ export default function Page() {
             </p>
           )}
 
-          {messages.map((message) => (
-            <div key={message.id} className="space-y-2">
-              <div className="text-xs font-medium uppercase tracking-wide text-gray-400">
-                {message.role}
+          {messages.map((message) => {
+            const isUser = message.role === "user";
+            return (
+              <div key={message.id} className="space-y-2">
+                <div className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                  {isUser ? "You" : "Copilot"}
+                </div>
+                {message.parts.map((part, i) => {
+                  if (part.type === "text") {
+                    return (
+                      <p
+                        key={i}
+                        className={`whitespace-pre-wrap break-words rounded-md px-3 py-2 text-sm ${
+                          isUser
+                            ? "bg-gray-900 text-white"
+                            : "bg-gray-50 text-gray-800"
+                        }`}
+                      >
+                        {part.text}
+                      </p>
+                    );
+                  }
+                  if (part.type.startsWith("tool-")) {
+                    return <ToolCall key={i} part={part} />;
+                  }
+                  return null;
+                })}
               </div>
-              {message.parts.map((part, i) => {
-                if (part.type === "text") {
-                  return (
-                    <p
-                      key={i}
-                      className="whitespace-pre-wrap rounded-md bg-gray-50 px-3 py-2 text-sm"
-                    >
-                      {part.text}
-                    </p>
-                  );
-                }
-                if (part.type.startsWith("tool-")) {
-                  return <ToolCall key={i} part={part} />;
-                }
-                return null;
-              })}
-            </div>
-          ))}
+            );
+          })}
 
-          {busy && <p className="text-xs text-gray-400">Copilot is working&hellip;</p>}
+          {busy && (
+            <p role="status" className="text-xs text-gray-400">
+              Copilot is working&hellip;
+            </p>
+          )}
         </div>
 
         <form
@@ -137,15 +153,19 @@ export default function Page() {
           className="flex items-center gap-2 border-t border-gray-200 px-4 py-3"
         >
           <input
-            className="flex-1 rounded border border-gray-300 px-3 py-2 text-sm"
+            className="flex-1 rounded border border-gray-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
             placeholder="Ask the analytics copilot…"
+            aria-label="Message the analytics copilot"
+            name="message"
+            autoComplete="off"
+            enterKeyHint="send"
             value={input}
             onChange={(e) => setInput(e.target.value)}
           />
           <button
             type="submit"
             disabled={busy}
-            className="rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 disabled:opacity-50"
           >
             Send
           </button>
@@ -161,7 +181,9 @@ export default function Page() {
               {pipeline.data.map((row) => (
                 <li key={row.stage} className="flex justify-between text-xs">
                   <span className="font-medium">{row.stage}</span>
-                  <span className="text-gray-400">{Number(row.count)}</span>
+                  <span className="tabular-nums text-gray-400">
+                    {Number(row.count)}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -203,7 +225,10 @@ function ToolCall({ part }: { part: unknown }) {
     <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-xs shadow-sm">
       <div className="flex items-center gap-2 font-medium text-gray-700">
         {!done && !errored && (
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
+          <span
+            aria-hidden="true"
+            className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500 motion-reduce:animate-none"
+          />
         )}
         <span className="font-mono">{name}</span>
         <span className="font-normal text-gray-400">
