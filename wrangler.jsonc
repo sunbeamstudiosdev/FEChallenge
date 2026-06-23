@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ats-analytics-copilot",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-04-01",
+  // nodejs_compat: the app runs on the Node.js runtime (the AI SDK, Neon HTTP
+  // driver, tRPC). global_fetch_strictly_public is recommended by OpenNext.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "ats-analytics-copilot"
+    }
+  ],
+  // Non-secret config. AI_GATEWAY_BASE_URL is set as a secret instead (keeps the
+  // account id out of the repo); AI_GATEWAY_CACHE_TTL makes our requests send
+  // cf-aig-cache-ttl once the gateway is in the path.
+  "vars": {
+    "AI_PROVIDER": "anthropic",
+    "ANTHROPIC_MODEL": "claude-sonnet-4-6",
+    "AI_GATEWAY_CACHE_TTL": "3600"
+  }
+  // Secrets — set with `wrangler secret put <NAME>` (never committed):
+  //   ANTHROPIC_API_KEY, DATABASE_URL, AI_GATEWAY_BASE_URL
+}

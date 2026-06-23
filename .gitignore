@@ -20,6 +20,12 @@ next-env.d.ts
 # misc
 .DS_Store
 
+# cloudflare / opennext build output + local worker secrets + generated types
+/.open-next
+.dev.vars
+cloudflare-env.d.ts
+.wrangler
+
 # local AI tooling (vendored skills, launch config, local settings) — not part
 # of the deliverable. The committed agent config is CLAUDE.md at the repo root.
 .claude/
