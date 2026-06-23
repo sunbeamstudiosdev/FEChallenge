@@ -1,10 +1,12 @@
 name: CI
 
-# The guarantees gate: typecheck, the adversarial tenant-isolation + PII test
-# suite, and the agent evals all run on every push and PR. If anyone weakens the
-# by-construction enforcement (scopeWhere, candidateSelection, no workspaceId in
-# tools), the test job goes red. Everything runs against the offline mock model
-# and in-memory PGlite, so no keys or services are needed.
+# The guarantees gate: typecheck, lint (incl. the tenant-table import fence that
+# forbids importing a tenant table outside the scoped data layer), the
+# adversarial tenant-isolation + PII test suite, and the agent evals all run on
+# every push and PR. If anyone weakens the by-construction enforcement
+# (scopeWhere, candidateSelection, the import fence, no workspaceId in tools),
+# the job goes red. Everything runs against the offline mock model and in-memory
+# PGlite, so no keys or services are needed.
 
 on:
   push:
@@ -29,6 +31,9 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: Lint (incl. tenant-table import fence)
+        run: pnpm lint
 
       - name: Guarantees + unit tests
         run: pnpm test

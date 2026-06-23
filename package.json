@@ -16,7 +16,8 @@
     "cf:build": "opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "cf:typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
+    "cf:typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^4.0.77",
@@ -45,6 +46,8 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "autoprefixer": "^10.4.20",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.9",
     "evalite": "1.0.0-beta.16",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",

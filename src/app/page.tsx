@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 
 import { ROLES } from "@/db/permissions";
-import type { Display, Row } from "@/agent/artifact";
+import type { Display, Headline, Row } from "@/agent/artifact";
 import {
   getActiveRole,
   getActiveWorkspace,
@@ -408,7 +408,12 @@ function Thinking() {
 // ---------------------------------------------------------------------------
 // Tool-call rendering — generative UI keyed on `display.kind`.
 // ---------------------------------------------------------------------------
-type ToolOutput = { rows?: Row[]; display?: Display; error?: string };
+type ToolOutput = {
+  rows?: Row[];
+  display?: Display;
+  headline?: Headline;
+  error?: string;
+};
 type ToolPart = {
   type: string;
   state?: string;
@@ -453,9 +458,48 @@ function Artifact({ output }: { output?: ToolOutput }) {
   if (rows.length === 0) {
     return <p className="text-xs text-muted-foreground">No matching data.</p>;
   }
-  if (display?.kind === "bar") return <BarChart rows={rows} display={display} />;
-  if (display?.kind === "line") return <LineChart rows={rows} display={display} />;
-  return <DataTable rows={rows} display={display} />;
+  return (
+    <div className="space-y-3">
+      {output?.headline && <HeadlineCard headline={output.headline} />}
+      {display?.kind === "bar" ? (
+        <BarChart rows={rows} display={display} />
+      ) : display?.kind === "line" ? (
+        <LineChart rows={rows} display={display} />
+      ) : (
+        <DataTable rows={rows} display={display} />
+      )}
+    </div>
+  );
+}
+
+/** Grounded "headline metric" stat card rendered above the chart. */
+function HeadlineCard({ headline }: { headline: Headline }) {
+  const { label, value, trend } = headline;
+  const trendColor =
+    trend?.direction === "up"
+      ? "text-emerald-600 dark:text-emerald-400"
+      : trend?.direction === "down"
+        ? "text-destructive"
+        : "text-muted-foreground";
+  const arrow =
+    trend?.direction === "up" ? "↑" : trend?.direction === "down" ? "↓" : "→";
+  return (
+    <div className="rounded-md border border-border bg-muted/40 px-3 py-2">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <div className="flex items-baseline gap-2">
+        <span className="text-2xl font-semibold tabular-nums text-foreground">
+          {value}
+        </span>
+        {trend && (
+          <span className={`text-xs font-medium ${trendColor}`}>
+            {arrow} {trend.label}
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function toNum(v: unknown): number {
@@ -605,6 +649,10 @@ function ThemeToggle() {
     const isDark =
       stored === "dark" ||
       (!stored && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    // Intentional post-mount setState: the server can't read localStorage /
+    // matchMedia, so reading the theme after hydration is what AVOIDS a
+    // hydration mismatch. This is the correct place for it.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDark(isDark);
     document.documentElement.classList.toggle("dark", isDark);
   }, []);

@@ -89,6 +89,26 @@ function candidateSelection(ctx: AnalyticsCtx): Record<string, PgColumn> {
 }
 
 /**
+ * The TYPE-LEVEL twin of `candidateSelection`: PII gating enforced a THIRD way,
+ * at compile time. `candidateSelection` omits PII columns from the SQL at
+ * runtime; here the row TYPE omits the PII keys for an analyst, so `row.email`
+ * is a *type error* at an analyst call site — the unsafe access can't even be
+ * written, not just won't return data. (Runtime projection + this static type +
+ * the adversarial PII test in `guarantees.test.ts` = enforced three ways.)
+ *
+ * The conditional distributes over `Role`, so when the role is only known as the
+ * `Role` union (the live request), the result widens to "PII may be absent",
+ * which is also the safe answer — you must narrow the role to read PII.
+ */
+type CandidateBase = { id: string; source: string; createdAt: Date };
+type CandidatePii = { name: string; email: string; phone: string };
+export type CandidateRow<R extends Role> = CandidateBase &
+  (R extends "analyst" ? unknown : CandidatePii);
+
+/** Extra fields present only when filtering by stage (a scoped join to applications). */
+type StageFields = { stage: Stage; jobId: string };
+
+/**
  * Run a scoped read with the Row-Level Security key (`app.workspace_id`) set for
  * this request, ATOMICALLY with the query so the two share one DB connection.
  * This is the DB-layer twin of `scopeWhere`: even a query that forgot the
@@ -216,12 +236,17 @@ export async function applicationsOverTime(
  * id/source/createdAt (+ stage/job when filtering by stage) but NEVER
  * name/email/phone, because those columns are never selected for that role.
  */
-export async function findCandidates(
-  ctx: AnalyticsCtx,
+export async function findCandidates<R extends Role>(
+  ctx: { workspaceId: string; role: R },
   opts: { source?: Source; stage?: Stage; limit?: number } = {},
-) {
+): Promise<Array<CandidateRow<R> & Partial<StageFields>>> {
   const limit = Math.min(opts.limit ?? 25, 100);
   const selection = candidateSelection(ctx);
+  // The runtime projection (candidateSelection) decides which columns actually
+  // come back; this asserts the matching static shape. The cast is the seam
+  // between drizzle's dynamic-projection type and our role-narrowed type — both
+  // are driven by the same `canReadColumn` rule, so they agree by construction.
+  type Result = Array<CandidateRow<R> & Partial<StageFields>>;
 
   if (opts.stage) {
     // Capture into consts so the narrowing survives into the scoped() closure.
@@ -244,11 +269,11 @@ export async function findCandidates(
           ]),
         )
         .limit(limit),
-    );
+    ) as unknown as Result;
   }
 
   const extra = opts.source ? [eq(candidates.source, opts.source)] : [];
   return scoped(ctx, (x) =>
     x.select(selection).from(candidates).where(scopeWhere(candidates, ctx, extra)).limit(limit),
-  );
+  ) as unknown as Result;
 }

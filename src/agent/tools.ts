@@ -12,7 +12,7 @@ import {
   TIME_BUCKETS,
   type AnalyticsCtx,
 } from "@/db/analytics";
-import type { Display, Row, ToolResult } from "./artifact";
+import type { Display, Headline, Row, ToolResult, Trend } from "./artifact";
 
 /**
  * The copilot's tool catalog — what the agent can actually do.
@@ -26,11 +26,36 @@ import type { Display, Row, ToolResult } from "./artifact";
  *  - Each returns `{ rows, display }`; PII gating lives in the query layer, so
  *    an analyst's results never contain candidate name/email/phone.
  */
+/** Coerce a possibly-stringified count to a number (drizzle returns counts as strings on some drivers). */
+const num = (v: unknown): number => (typeof v === "number" ? v : Number(v) || 0);
+
+/** Sum a numeric column across rows — the basis for the grounded headline totals. */
+const total = (rows: Row[], key = "count"): number =>
+  rows.reduce((sum, r) => sum + num(r[key]), 0);
+
+/**
+ * Period-over-period trend for a time series (rows are chronological). Compares
+ * the latest bucket to the one before it. Returns undefined when there isn't
+ * enough data (or the prior bucket is zero) so we never show a misleading delta.
+ */
+function timeTrend(rows: Row[], bucket: string): Trend | undefined {
+  const lastRow = rows.at(-1);
+  const prevRow = rows.at(-2);
+  if (!lastRow || !prevRow) return undefined;
+  const last = num(lastRow.count);
+  const prev = num(prevRow.count);
+  if (prev === 0) return undefined;
+  const pct = Math.round(((last - prev) / prev) * 100);
+  const direction: Trend["direction"] = pct > 0 ? "up" : pct < 0 ? "down" : "flat";
+  return { direction, label: `${pct > 0 ? "+" : ""}${pct}% vs the prior ${bucket}` };
+}
+
 export function buildTools(ctx: AnalyticsCtx) {
-  const ok = (rows: ToolResult["rows"], display: Display): ToolResult => ({
-    rows,
-    display,
-  });
+  const ok = (
+    rows: ToolResult["rows"],
+    display: Display,
+    headline?: Headline,
+  ): ToolResult => ({ rows, display, ...(headline ? { headline } : {}) });
 
   /**
    * Wrap a tool body so a query failure returns a structured error the model
@@ -66,12 +91,14 @@ export function buildTools(ctx: AnalyticsCtx) {
       execute: ({ jobId }) =>
         guard({ kind: "bar", x: "stage", y: "count", title: "Applications by stage" }, async () => {
           const rows = await applicationCountByStage(ctx, { jobId });
-          return ok(rows, {
-            kind: "bar",
-            x: "stage",
-            y: "count",
-            title: "Applications by stage",
-          });
+          return ok(
+            rows,
+            { kind: "bar", x: "stage", y: "count", title: "Applications by stage" },
+            {
+              label: jobId ? "Applications (this job)" : "Total applications",
+              value: String(total(rows)),
+            },
+          );
         }),
     }),
 
@@ -88,12 +115,19 @@ export function buildTools(ctx: AnalyticsCtx) {
       execute: ({ stage }) =>
         guard({ kind: "bar", x: "job", y: "count", title: "Applications by job" }, async () => {
           const rows = await applicationsByJob(ctx, { stage });
-          return ok(rows, {
-            kind: "bar",
-            x: "job",
-            y: "count",
-            title: stage ? `Applications by job (${stage})` : "Applications by job",
-          });
+          return ok(
+            rows,
+            {
+              kind: "bar",
+              x: "job",
+              y: "count",
+              title: stage ? `Applications by job (${stage})` : "Applications by job",
+            },
+            {
+              label: stage ? `Applications in ${stage}` : "Total applications",
+              value: String(total(rows)),
+            },
+          );
         }),
     }),
 
@@ -105,12 +139,11 @@ export function buildTools(ctx: AnalyticsCtx) {
       execute: () =>
         guard({ kind: "bar", x: "source", y: "count", title: "Candidates by source" }, async () => {
           const rows = await candidatesBySource(ctx);
-          return ok(rows, {
-            kind: "bar",
-            x: "source",
-            y: "count",
-            title: "Candidates by source",
-          });
+          return ok(
+            rows,
+            { kind: "bar", x: "source", y: "count", title: "Candidates by source" },
+            { label: "Total candidates", value: String(total(rows)) },
+          );
         }),
     }),
 
@@ -127,12 +160,20 @@ export function buildTools(ctx: AnalyticsCtx) {
       execute: ({ bucket }) =>
         guard({ kind: "line", x: "period", y: "count", title: "Applications over time" }, async () => {
           const rows = await applicationsOverTime(ctx, { bucket });
-          return ok(rows, {
-            kind: "line",
-            x: "period",
-            y: "count",
-            title: `Applications over time (by ${bucket})`,
-          });
+          return ok(
+            rows,
+            {
+              kind: "line",
+              x: "period",
+              y: "count",
+              title: `Applications over time (by ${bucket})`,
+            },
+            {
+              label: "Total applications",
+              value: String(total(rows)),
+              trend: timeTrend(rows, bucket),
+            },
+          );
         }),
     }),
 
@@ -163,7 +204,11 @@ export function buildTools(ctx: AnalyticsCtx) {
           // Columns reflect what was actually selected — for an analyst the PII
           // columns are absent, so they never appear in the table either.
           const columns = rows[0] ? Object.keys(rows[0]) : ["id", "source", "createdAt"];
-          return ok(rows, { kind: "table", columns });
+          const capped = rows.length === limit;
+          return ok(rows, { kind: "table", columns }, {
+            label: capped ? `Candidates (first ${limit})` : "Candidates",
+            value: String(rows.length),
+          });
         }),
     }),
   };
