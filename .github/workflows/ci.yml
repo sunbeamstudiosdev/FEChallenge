@@ -1,0 +1,39 @@
+name: CI
+
+# The guarantees gate: typecheck, the adversarial tenant-isolation + PII test
+# suite, and the agent evals all run on every push and PR. If anyone weakens the
+# by-construction enforcement (scopeWhere, candidateSelection, no workspaceId in
+# tools), the test job goes red. Everything runs against the offline mock model
+# and in-memory PGlite, so no keys or services are needed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable corepack (pnpm from packageManager field)
+        run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Guarantees + unit tests
+        run: pnpm test
+
+      - name: Agent evals (mock model)
+        run: pnpm eval
+        env:
+          AI_PROVIDER: mock
