@@ -786,20 +786,23 @@ function DataTable({ rows, display }: { rows: Row[]; display?: Display }) {
           </tr>
         </thead>
         <tbody>
-          {rows.slice(0, 12).map((row, i) => (
-            <tr key={i} className="text-foreground transition-colors hover:bg-muted/40">
-              {columns.map((c) => (
-                <td
-                  key={c}
-                  className={`border-b border-border/60 px-3 py-2.5 tabular-nums first:pl-1 ${
-                    WRAPPABLE_COLUMN.test(c) ? "break-words" : "whitespace-nowrap"
-                  }`}
-                >
-                  {formatCell(row[c])}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {rows.slice(0, 12).map((row, i, visible) => {
+            const isLast = i === visible.length - 1;
+            return (
+              <tr key={i} className="text-foreground transition-colors hover:bg-muted/40">
+                {columns.map((c) => (
+                  <td
+                    key={c}
+                    className={`px-3 py-2.5 tabular-nums first:pl-1 ${
+                      isLast ? "" : "border-b border-border/60"
+                    } ${WRAPPABLE_COLUMN.test(c) ? "break-words" : "whitespace-nowrap"}`}
+                  >
+                    {formatCell(row[c])}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
