@@ -8,6 +8,7 @@ import {
 
 import { ensureSchema } from "@/db/client";
 import type { Role } from "@/db/permissions";
+import { env } from "@/env";
 import { buildTools } from "./tools";
 import { getModel, SYSTEM_PROMPT } from "./provider";
 
@@ -43,5 +44,11 @@ export async function streamCopilot({
     messages: await convertToModelMessages(messages),
     tools: buildTools({ workspaceId, role }),
     stopWhen: stepCountIs(6),
+    // Tag each request with the tenant so the gateway's analytics, caching, and
+    // rate-limit views can be segmented per workspace/role. Gateway-only; the
+    // header is meaningless (and unset) when calling Anthropic directly.
+    headers: env.AI_GATEWAY_BASE_URL
+      ? { "cf-aig-metadata": JSON.stringify({ workspaceId, role }) }
+      : undefined,
   });
 }

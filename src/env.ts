@@ -36,6 +36,20 @@ export const env = {
    */
   AI_GATEWAY_TOKEN: process.env.AI_GATEWAY_TOKEN,
 
+  /**
+   * Cloudflare AI Gateway response caching (only applied when routing through
+   * the gateway). Set a TTL in seconds (60..2592000) to opt our requests into
+   * caching via the `cf-aig-cache-ttl` header. Leave unset to follow the
+   * gateway's own default-caching setting.
+   */
+  AI_GATEWAY_CACHE_TTL: process.env.AI_GATEWAY_CACHE_TTL,
+
+  /**
+   * Set to "true" to send `cf-aig-skip-cache` and bypass the cache — handy in a
+   * live demo when you want every answer to reflect the freshest data.
+   */
+  AI_GATEWAY_SKIP_CACHE: process.env.AI_GATEWAY_SKIP_CACHE,
+
   /** File-backed PGlite directory, shared by the seed and dev processes. */
   PGLITE_DIR: process.env.PGLITE_DIR ?? "./.pglite",
 } as const;

@@ -43,17 +43,29 @@ export function getModel(): LanguageModel {
           "AI_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set. Set it in .env.local or use AI_PROVIDER=mock.",
         );
       }
+      // Cloudflare AI Gateway controls travel as request headers. Auth applies
+      // whenever a token is set; cache controls only make sense when we're
+      // actually routed through the gateway.
+      const gwHeaders: Record<string, string> = {};
+      if (env.AI_GATEWAY_TOKEN) {
+        gwHeaders["cf-aig-authorization"] = `Bearer ${env.AI_GATEWAY_TOKEN}`;
+      }
+      if (env.AI_GATEWAY_BASE_URL) {
+        if (env.AI_GATEWAY_CACHE_TTL) {
+          gwHeaders["cf-aig-cache-ttl"] = env.AI_GATEWAY_CACHE_TTL;
+        }
+        if (env.AI_GATEWAY_SKIP_CACHE === "true") {
+          gwHeaders["cf-aig-skip-cache"] = "true";
+        }
+      }
+
       const anthropic = createAnthropic({
         apiKey: process.env.ANTHROPIC_API_KEY,
         // The gateway when configured, otherwise the official API. We pin this
         // explicitly so a stray ANTHROPIC_BASE_URL in the environment can't
         // silently redirect us (and drop the required /v1 path).
         baseURL: baseURL ?? "https://api.anthropic.com/v1",
-        // When routing through an *authenticated* Cloudflare AI Gateway, send
-        // the gateway token alongside the Anthropic key. Harmless when unset.
-        headers: env.AI_GATEWAY_TOKEN
-          ? { "cf-aig-authorization": `Bearer ${env.AI_GATEWAY_TOKEN}` }
-          : undefined,
+        headers: Object.keys(gwHeaders).length ? gwHeaders : undefined,
       });
       return anthropic(env.ANTHROPIC_MODEL);
     }
