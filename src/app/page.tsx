@@ -734,6 +734,36 @@ function LineChart({
   );
 }
 
+/** "createdAt" -> "Created At", "jobId" -> "Job ID", "id" -> "ID". */
+function formatColumn(c: string): string {
+  return c
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .replace(/\bid\b/gi, "ID")
+    .replace(/^\w/, (s) => s.toUpperCase());
+}
+
+/** Render a cell: turn ISO timestamps into a compact date so they don't wrap. */
+function formatCell(value: unknown): string {
+  if (value == null) return "";
+  const s = String(value);
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:/.test(s)) {
+    const d = new Date(s);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+    }
+  }
+  return s;
+}
+
+// Long free-text columns may wrap so they don't blow out the table width;
+// short structured columns (ids, dates, phone, stage, counts) stay on one line.
+const WRAPPABLE_COLUMN = /email|description|notes|title/i;
+
 function DataTable({ rows, display }: { rows: Row[]; display?: Display }) {
   const columns =
     display && display.kind === "table" && display.columns.length > 0
@@ -741,29 +771,31 @@ function DataTable({ rows, display }: { rows: Row[]; display?: Display }) {
       : Object.keys(rows[0]);
 
   return (
-    <div className="overflow-x-auto">
+    <div className="-mx-1 overflow-x-auto px-1">
       <table className="w-full border-collapse text-left text-xs">
         <thead>
           <tr className="text-muted-foreground">
             {columns.map((c) => (
               <th
                 key={c}
-                className="border-b border-border py-1.5 pr-3 font-medium capitalize"
+                className="whitespace-nowrap border-b border-border px-3 py-2.5 font-medium first:pl-1"
               >
-                {c}
+                {formatColumn(c)}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
           {rows.slice(0, 12).map((row, i) => (
-            <tr key={i} className="text-foreground">
+            <tr key={i} className="text-foreground transition-colors hover:bg-muted/40">
               {columns.map((c) => (
                 <td
                   key={c}
-                  className="border-b border-border/60 py-1.5 pr-3 tabular-nums"
+                  className={`border-b border-border/60 px-3 py-2.5 tabular-nums first:pl-1 ${
+                    WRAPPABLE_COLUMN.test(c) ? "break-words" : "whitespace-nowrap"
+                  }`}
                 >
-                  {String(row[c] ?? "")}
+                  {formatCell(row[c])}
                 </td>
               ))}
             </tr>
