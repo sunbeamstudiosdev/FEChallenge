@@ -605,6 +605,10 @@ function ThemeToggle() {
     const isDark =
       stored === "dark" ||
       (!stored && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    // Intentional post-mount setState: the server can't read localStorage /
+    // matchMedia, so reading the theme after hydration is what AVOIDS a
+    // hydration mismatch. This is the correct place for it.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDark(isDark);
     document.documentElement.classList.toggle("dark", isDark);
   }, []);
