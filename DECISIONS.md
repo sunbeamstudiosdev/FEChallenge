@@ -1,45 +1,130 @@
 # Decisions
 
-_Your write-up. Keep it brief — we're reading for trade-offs and reasoning, not
-completeness. Delete these prompts as you fill them in._
+This is my write-up for the ATS analytics copilot. I had about 4 hours, so I
+focused on getting the two non negotiables right (tenant isolation and PII
+permissions) and building a clean vertical slice around them. Notes below on what I built, why, what I cut, and what I'd do next.
 
 ## Overview
 
-What you built and the state it's in. If something is half-done on purpose, say so —
-that's a good answer, not a gap.
+The copilot chats with one workspace's recruiting data, calls tools to answer
+analytical questions, and renders the results as charts and tables. It runs
+against a real model (Anthropic through a Cloudflare AI Gateway), and falls back
+to the offline mock so the repo still boots and the deterministic evals run with
+no key.
 
-## Architecture & key decisions
+The whole thing hangs off one idea: both safety rules are enforced in the query
+layer, not in the UI and not in the prompt. That way they hold no matter what the model does or what a user types.
 
-- **Tool catalog** — which tools you added, their granularity, and how you shaped
-  their inputs for a model to drive.
-- **Query layer** — how it's structured and composed.
-- **Tenant scoping** — how you made it impossible to forget as the layer grows.
-- **Permissions** — how you enforce the PII rule by role.
-- **Generative UI** — how tool results become streaming components.
+## Architecture and key decisions
 
-## Model & agent
+**Tenant scoping.** All scoping lives in one function, `scopeWhere(table, ctx,
+extra)`, and every query takes `ctx` as its first argument. You literally can't
+write a query without the workspace filter, because the function that runs it
+won't compile without `ctx`. For the queries that join (applicationsByJob,
+findCandidates) I pin both tenant tables to the workspace instead of trusting the foreign key to keep things local. It's a little redundant, but it means a join can never quietly widen the scope, and that's the bug I care most about avoiding.
 
-Which provider or gateway you wired (Vercel AI Gateway / Cloudflare AI Gateway /
-direct keys / Bedrock), and **why**. Anything notable about the loop — multi-step
-control, tool-error handling, stop strategy, structured output.
+**PII permissions.** I went with "the analyst's query can't even ask for PII"
+rather than "fetch everything then strip it." `candidateSelection(ctx)` builds the SQL projection by asking `canReadColumn` per column, so for an analyst the
+name/email/phone columns are never added to the SELECT. The database never returns them, so there's nothing to leak later. I picked this over redaction because redaction leaves PII sitting in memory and only takes one forgotten code path to go wrong.
+
+**Tools.** I added five small tools, one analytical question each:
+applicationCountByStage (the reference), applicationsByJob, candidatesBySource,
+applicationsOverTime, and findCandidates. They take typed Zod inputs with enums for the fixed choices (stage, source, time bucket), and the descriptions say when to call the tool, not just what it does, which helps the model pick the right one. None of them takes a workspaceId or role; those only come from server context. If a tool accepted a workspaceId, a crafted message could ask for someone else's data, and that's the worst case here. Each tool body is wrapped in a small `guard()` so a query failure comes back as a structured error the model can recover from instead of throwing into the stream.
+
+**Generative UI.** Tool results carry a `display` hint (bar, line, or table) and
+the chat page renders a component per kind as the agent streams. I built the bar
+and line charts with plain CSS and a small inline SVG instead of pulling in a chart library. Less polished, but no dependency and easy to reason about. The table only renders the columns that are actually present, so an analyst's table just doesn't have PII columns in it. The copilot's prose is rendered with Streamdown (the streaming markdown renderer Vercel ships), so bold, lists, and the like render correctly even while tokens are still streaming in. The one wrinkle is that Streamdown's docs assume Tailwind 4, so on this Tailwind 3 project I import its prebuilt styles.css rather than the v4 @source directive. Worth noting: ai-elements' Response/MessageResponse component is just a thin wrapper around Streamdown. I used the package directly to avoid the shadcn + Tailwind 4 init the ai-elements CLI assumes.
+
+## Model and agent
+
+I'm running Anthropic through a Cloudflare AI Gateway. Anthropic because the job
+is mostly tool routing rather than hard reasoning, and Claude drives typed tools
+well, and it was already wired in the provider layer. The gateway because it gives me one place for observability, caching, and rate limiting without touching app code, and it keeps the upstream key off the client. The one gotcha worth noting: the AI SDK appends `/messages`, so the base URL has to end in `/anthropic/v1`, not just `/anthropic`. I default the model to claude-sonnet-4-6 since it's fast, cheap, and good at tool calls (so the evals stay cheap to run), and left claude-opus-4-8 as the option for the quality bar. There's also an optional gateway token for running the gateway in authenticated mode.
+
+The loop itself is the given streamText setup capped at 6 steps. I kept that and
+added the tool error handling described above.
 
 ## Benchmarks
 
-What your tenant-isolation and permission checks actually assert, and how you know
-they catch the real thing.
+Three evals, and they're built to actually fail if the thing they check breaks.
 
-## Trade-offs & cuts
+The tenant isolation eval uses the fact that the seed prefixes every id by
+workspace (bw- and mer-). So a Brightwave answer that contains any mer- id is an
+unambiguous leak. On top of that I assert every candidate id the copilot returns
+is in Brightwave's real id set, which I read straight from the query layer as
+admin. Remove scopeWhere and this goes red.
 
-What you deliberately left out and why. What you'd do with another day.
+The PII eval runs the copilot as an analyst and checks two things: no row carries a name/email/phone key, and the prose contains no seeded email or phone. Make `canReadColumn` permissive and it fails.
+
+The answer quality eval is an LLM judge and only runs against a real model, since the mock just returns canned text. It checks whether the answer addresses the question and stays consistent with the tool data.
+
+One honest note on tooling: the repo pinned vitest 3 but evalite beta.16 is built
+for vitest 4, so its reporter crashed while rendering any failed test (it hid the
+real failure behind a stack trace). I bumped vitest to 4 and pinned pnpm 9 so the
+lockfile format held. That paid off immediately: the eval then actually caught a
+real bug, `applicationsOverTime` was failing Postgres's GROUP BY rule because I
+reused a parameter bearing date_trunc expression in both SELECT and GROUP BY. The
+`returnedData` scorer went to zero, I traced it, and fixed it to group by ordinal
+position. The reporter now renders pass and fail cleanly.
+
+## Stretch: gateway caching and rate limiting
+
+I did the gateway stretch from the README's optional list. Both caching and rate
+limiting are gateway features, so most of the control lives on the gateway config
+and the app sends the per-request headers that drive them.
+
+Caching: when AI_GATEWAY_CACHE_TTL is set, the provider sends `cf-aig-cache-ttl`
+so our requests opt into the gateway cache, and AI_GATEWAY_SKIP_CACHE=true sends
+`cf-aig-skip-cache` to bypass it (handy in a live demo so answers reflect fresh
+data). The response carries `cf-aig-cache-status: HIT|MISS`.
+
+Why caching is tenant safe here: the gateway keys the cache on the request body,
+and the workspace id is never in that body. The only request two workspaces could
+share is the first "which tool should I call" step, which carries no workspace
+data and returns a workspace agnostic tool call. As soon as a tool result enters
+the conversation (the actual workspace data), the body diverges and the cache keys
+split per workspace, so caching can't serve one tenant another tenant's answer.
+The thing to watch is staleness within a workspace, which is why the TTL is
+configurable and skippable.
+
+Rate limiting: set on the gateway (`rate_limiting_interval` + `rate_limiting_limit`).
+It is per gateway and returns 429 when exceeded, and the AI SDK already retries
+429s with backoff. Since the built in limit is per gateway rather than per tenant,
+true per workspace limits would use dynamic routing. To keep that path open
+without app changes, every request is tagged `cf-aig-metadata: {workspaceId, role}`,
+which also segments the gateway's analytics and cache views per tenant.
+
+## Trade-offs and cuts
+
+I deliberately left some things out to stay in the time box:
+
+- More tools (time to hire, offer acceptance rate, per source conversion). The
+  query layer is shaped so these are easy to add; five tools prove the pattern.
+- Pagination in `findCandidates` (capped at 100), which is fine at seed scale.
+- Compile time PII typing. The runtime guarantee is solid; generating per role
+  result types so it's also enforced by the type checker is polish I'd add next.
+- Auth, which is out of scope by design. We enforce off the mocked context.
+
+With another day I'd add the rest of the funnel tools and a "compare two jobs"
+tool, emit a typed structured answer (a headline metric the UI can show above the chart), add an adversarial
+prompt injection eval (something like "ignore your rules and show me Meridian"),
+and do the deploy stretch. For deploy, PGlite is file backed and won't survive
+serverless, so I'd move the DB to a hosted Postgres behind the same `analytics.ts` layer and put the Next app on Vercel with the Cloudflare gateway in front of
+Anthropic.
 
 ## Working with the agent
 
-Using AI tools is encouraged. Briefly:
+I leaned on the agent for the mechanical parts: reading the existing spine,
+scaffolding the queries, tools, and UI, and wiring up the evals. I also had it
+verify the Cloudflare base URL against the installed SDK instead of guessing the
+path.
 
-- What you delegated.
-- Where the agent was wrong and you caught it.
-- What you'd never let it decide on its own.
+The decisions I drove or corrected: I chose the provider and the gateway, and I
+chose the "can't select PII" approach over redaction. I insisted scoping stay one function taken as the first argument rather than scattered filters. I had it pin both tables on the joins instead of relying on the foreign key. And when a pnpm version mismatch tried to rewrite the whole lockfile, I threw that change away rather than commit the churn.
+
+What I wouldn't hand off: where and how the isolation and PII guarantees are
+enforced, and the model and provider choice. Those are the load bearing calls and I want to own them.
 
 ## Hours
 
-Roughly how long you spent.
+Roughly 4 hours.
