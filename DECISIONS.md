@@ -141,14 +141,26 @@ since the provider falls back to direct Anthropic when it is unset, so I can shi
 working URL first and route through the gateway (with its caching and rate limiting
 turned on) after.
 
-The one gotcha worth logging is keeping PGlite out of the Worker bundle.
-`serverExternalPackages` plus the dead branch dynamic import handles it, and
-`opennextjs-cloudflare build` then bundles cleanly, which I verified locally before
-touching any account.
-
 Deploy steps: create the Neon DB and grab its connection string, seed it
 (`DATABASE_URL=... pnpm db:seed`), `wrangler login`, set the two secrets, then
-`pnpm cf:deploy` for a live workers.dev URL.
+`pnpm cf:deploy`.
+
+Live at https://ats-analytics-copilot.f-7a4.workers.dev. I verified both
+non negotiables end to end on the Worker, not just locally: the tenant switcher
+reads the two workspaces from Neon, an admin question runs `applicationCountByStage`
+and streams a grounded answer, and an analyst asking for names and emails gets
+de-identified rows with no PII in the response. It is running direct to Anthropic
+for now; turning the gateway on (with its caching and rate limiting) is the last
+step.
+
+One wart to log: OpenNext's esbuild still bundles PGlite's wasm glue into the
+Worker even though it is never used there (`DATABASE_URL` is always set in
+production, so the PGlite branch is dead code). It deploys and runs fine because
+that code never executes, but it bloats the bundle and triggers a direct-eval
+warning. `serverExternalPackages` keeps PGlite out of Next's own bundle but
+OpenNext re-bundles the server function and pulls it back in. The clean fix is to
+mark `@electric-sql/pglite` external in the OpenNext server bundle, which I'd do
+next.
 
 ## Working with the agent
 
