@@ -8,7 +8,7 @@ import { sql } from "drizzle-orm";
 
 import { db } from "./client";
 
-export async function ensureSchema(): Promise<void> {
+export async function runMigrations(): Promise<void> {
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS "workspaces" (
       "id"   text PRIMARY KEY NOT NULL,
@@ -62,4 +62,47 @@ export async function ensureSchema(): Promise<void> {
       "updated_at"   timestamp NOT NULL
     );
   `);
+
+  await applyRowLevelSecurity();
+}
+
+/**
+ * Tenant Row-Level Security: a second enforcement layer UNDER `scopeWhere`.
+ * Even if an app-layer query forgot the workspace filter, the database itself
+ * only returns rows for the workspace set in `app.workspace_id`.
+ *
+ * How it engages on both backends: the app assumes a restricted, non-superuser
+ * `app_user` role for reads (via `SET LOCAL ROLE` in `scoped()`), and RLS
+ * applies to that role. The seed connects as the owner (a superuser on PGlite),
+ * which bypasses RLS, so it loads both workspaces in one pass without needing
+ * write policies. `current_setting(..., true)` returns NULL when the key is
+ * unset, so an unscoped read returns NOTHING (fail-closed).
+ *
+ * The `workspaces` directory table has no `workspace_id` and is read across
+ * tenants for the switcher, so it is intentionally left without RLS (and is read
+ * as the owner, not `app_user`).
+ */
+const TENANT_TABLES = ["users", "jobs", "candidates", "applications"] as const;
+
+async function applyRowLevelSecurity(): Promise<void> {
+  try {
+    await db.execute(sql.raw(`CREATE ROLE app_user NOLOGIN`));
+  } catch {
+    // Role already exists from a previous run.
+  }
+  // Let the owner assume the role (needed on Neon; harmless for a PGlite superuser).
+  await db.execute(sql.raw(`GRANT app_user TO CURRENT_USER`));
+  await db.execute(sql.raw(`GRANT USAGE ON SCHEMA public TO app_user`));
+
+  for (const t of TENANT_TABLES) {
+    await db.execute(sql.raw(`GRANT SELECT ON "${t}" TO app_user`));
+    await db.execute(sql.raw(`ALTER TABLE "${t}" ENABLE ROW LEVEL SECURITY`));
+    await db.execute(sql.raw(`DROP POLICY IF EXISTS "${t}_tenant_select" ON "${t}"`));
+    await db.execute(
+      sql.raw(
+        `CREATE POLICY "${t}_tenant_select" ON "${t}" FOR SELECT TO app_user ` +
+          `USING (workspace_id = current_setting('app.workspace_id', true))`,
+      ),
+    );
+  }
 }

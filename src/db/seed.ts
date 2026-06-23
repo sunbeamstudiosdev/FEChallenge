@@ -1,4 +1,5 @@
-import { db, ensureSchema } from "./client";
+import { db } from "./client";
+import { runMigrations } from "./migrate";
 import {
   applications,
   candidates,
@@ -186,7 +187,7 @@ function buildFixtures() {
 }
 
 export async function seed(): Promise<void> {
-  await ensureSchema();
+  await runMigrations();
 
   // Wipe in FK-safe order, then re-insert. Keeps reseeds deterministic.
   await db.delete(applications);

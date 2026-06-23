@@ -5,11 +5,12 @@ import {
   applicationCountByStage,
   candidatesBySource,
   findCandidates,
+  scoped,
   type AnalyticsCtx,
 } from "@/db/analytics";
 import { db, ensureSchema } from "@/db/client";
 import { canReadColumn, PII_COLUMNS } from "@/db/permissions";
-import { workspaces } from "@/db/schema";
+import { candidates, workspaces } from "@/db/schema";
 import { seed } from "@/db/seed";
 import { buildTools } from "@/agent/tools";
 import { streamCopilot } from "@/agent/run";
@@ -84,6 +85,16 @@ describe("tenant isolation", () => {
   test("scoped query never returns the other workspace's rows", async () => {
     const bw = await findCandidates(ctx(BW, "admin"), { limit: 100 });
     expect(strings(bw as Array<Record<string, unknown>>).some((s) => OTHER_TENANT_ID.test(s))).toBe(false);
+  });
+
+  test("RLS blocks cross-tenant at the DB even without an app-layer filter", async () => {
+    // scoped() sets the RLS key, but this raw read has NO scopeWhere clause.
+    // Row-Level Security alone must keep it to Brightwave — defense in depth.
+    const rows = (await scoped(ctx(BW, "admin"), (x) =>
+      x.select().from(candidates),
+    )) as Array<Record<string, unknown>>;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => String(r.id).startsWith("bw-"))).toBe(true);
   });
 
   test("adversarial: asking as Brightwave for Meridian's data leaks nothing", async () => {

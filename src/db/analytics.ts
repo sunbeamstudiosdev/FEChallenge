@@ -9,7 +9,7 @@ import {
 } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 
-import { db } from "./client";
+import { db, isNeon } from "./client";
 import { canReadColumn, type Role } from "./permissions";
 import { applications, candidates, jobs } from "./schema";
 
@@ -89,6 +89,46 @@ function candidateSelection(ctx: AnalyticsCtx): Record<string, PgColumn> {
 }
 
 /**
+ * Run a scoped read with the Row-Level Security key (`app.workspace_id`) set for
+ * this request, ATOMICALLY with the query so the two share one DB connection.
+ * This is the DB-layer twin of `scopeWhere`: even a query that forgot the
+ * workspace filter would still only see this workspace's rows (RLS in
+ * `migrate.ts`). Exported so a test can prove RLS works on its own.
+ *
+ * neon-http has no interactive transactions, but `batch()` runs both statements
+ * in one HTTP request on one connection; PGlite uses an interactive transaction.
+ * `set_config(..., true)` is transaction-local, so the setting never leaks.
+ */
+export async function scoped<T>(
+  ctx: AnalyticsCtx,
+  build: (x: typeof db) => PromiseLike<T>,
+): Promise<T> {
+  // Drop to the restricted role so RLS applies, then set the workspace key, then
+  // run the query — all in one transaction so the role/key are scoped to it.
+  const asAppUser = sql.raw("SET LOCAL ROLE app_user");
+  const setKey = sql`select set_config('app.workspace_id', ${ctx.workspaceId}, true)`;
+  if (isNeon) {
+    const runner = db as unknown as {
+      batch: (q: unknown[]) => Promise<unknown[]>;
+    };
+    const [, , rows] = await runner.batch([
+      db.execute(asAppUser),
+      db.execute(setKey),
+      build(db),
+    ]);
+    return rows as T;
+  }
+  const runner = db as unknown as {
+    transaction: (fn: (tx: typeof db) => Promise<T>) => Promise<T>;
+  };
+  return runner.transaction(async (tx) => {
+    await tx.execute(asAppUser);
+    await tx.execute(setKey);
+    return await build(tx);
+  });
+}
+
+/**
  * REFERENCE QUERY: applications grouped by pipeline stage, scoped to the
  * caller's workspace. `ctx` comes first on purpose — the tenant scope can't be
  * forgotten because the query can't be called without it.
@@ -98,12 +138,14 @@ export async function applicationCountByStage(
   opts: { jobId?: string } = {},
 ) {
   const extra = opts.jobId ? [eq(applications.jobId, opts.jobId)] : [];
-  return db
-    .select({ stage: applications.stage, count: count() })
-    .from(applications)
-    .where(scopeWhere(applications, ctx, extra))
-    .groupBy(applications.stage)
-    .orderBy(desc(count()));
+  return scoped(ctx, (x) =>
+    x
+      .select({ stage: applications.stage, count: count() })
+      .from(applications)
+      .where(scopeWhere(applications, ctx, extra))
+      .groupBy(applications.stage)
+      .orderBy(desc(count())),
+  );
 }
 
 /**
@@ -115,28 +157,32 @@ export async function applicationsByJob(
   ctx: AnalyticsCtx,
   opts: { stage?: Stage } = {},
 ) {
-  return db
-    .select({ job: jobs.title, count: count() })
-    .from(applications)
-    .innerJoin(jobs, eq(jobs.id, applications.jobId))
-    .where(
-      scopeWhere(applications, ctx, [
-        eq(jobs.workspaceId, ctx.workspaceId),
-        opts.stage ? eq(applications.stage, opts.stage) : undefined,
-      ]),
-    )
-    .groupBy(jobs.title)
-    .orderBy(desc(count()));
+  return scoped(ctx, (x) =>
+    x
+      .select({ job: jobs.title, count: count() })
+      .from(applications)
+      .innerJoin(jobs, eq(jobs.id, applications.jobId))
+      .where(
+        scopeWhere(applications, ctx, [
+          eq(jobs.workspaceId, ctx.workspaceId),
+          opts.stage ? eq(applications.stage, opts.stage) : undefined,
+        ]),
+      )
+      .groupBy(jobs.title)
+      .orderBy(desc(count())),
+  );
 }
 
 /** Candidates grouped by acquisition source (aggregate, no PII). */
 export async function candidatesBySource(ctx: AnalyticsCtx) {
-  return db
-    .select({ source: candidates.source, count: count() })
-    .from(candidates)
-    .where(scopeWhere(candidates, ctx))
-    .groupBy(candidates.source)
-    .orderBy(desc(count()));
+  return scoped(ctx, (x) =>
+    x
+      .select({ source: candidates.source, count: count() })
+      .from(candidates)
+      .where(scopeWhere(candidates, ctx))
+      .groupBy(candidates.source)
+      .orderBy(desc(count())),
+  );
 }
 
 /**
@@ -153,12 +199,14 @@ export async function applicationsOverTime(
   // Group/order by ordinal position: a bound param inside the expression keeps
   // Postgres from text-matching a repeated GROUP BY of the same fragment, and
   // the 'YYYY-MM-DD' format makes lexical order chronological.
-  return db
-    .select({ period, count: count() })
-    .from(applications)
-    .where(scopeWhere(applications, ctx))
-    .groupBy(sql`1`)
-    .orderBy(sql`1`);
+  return scoped(ctx, (x) =>
+    x
+      .select({ period, count: count() })
+      .from(applications)
+      .where(scopeWhere(applications, ctx))
+      .groupBy(sql`1`)
+      .orderBy(sql`1`),
+  );
 }
 
 /**
@@ -176,28 +224,31 @@ export async function findCandidates(
   const selection = candidateSelection(ctx);
 
   if (opts.stage) {
-    return db
-      .select({
-        ...selection,
-        stage: applications.stage,
-        jobId: applications.jobId,
-      })
-      .from(candidates)
-      .innerJoin(applications, eq(applications.candidateId, candidates.id))
-      .where(
-        scopeWhere(candidates, ctx, [
-          eq(applications.workspaceId, ctx.workspaceId),
-          eq(applications.stage, opts.stage),
-          opts.source ? eq(candidates.source, opts.source) : undefined,
-        ]),
-      )
-      .limit(limit);
+    // Capture into consts so the narrowing survives into the scoped() closure.
+    const stage = opts.stage;
+    const source = opts.source;
+    return scoped(ctx, (x) =>
+      x
+        .select({
+          ...selection,
+          stage: applications.stage,
+          jobId: applications.jobId,
+        })
+        .from(candidates)
+        .innerJoin(applications, eq(applications.candidateId, candidates.id))
+        .where(
+          scopeWhere(candidates, ctx, [
+            eq(applications.workspaceId, ctx.workspaceId),
+            eq(applications.stage, stage),
+            source ? eq(candidates.source, source) : undefined,
+          ]),
+        )
+        .limit(limit),
+    );
   }
 
   const extra = opts.source ? [eq(candidates.source, opts.source)] : [];
-  return db
-    .select(selection)
-    .from(candidates)
-    .where(scopeWhere(candidates, ctx, extra))
-    .limit(limit);
+  return scoped(ctx, (x) =>
+    x.select(selection).from(candidates).where(scopeWhere(candidates, ctx, extra)).limit(limit),
+  );
 }
